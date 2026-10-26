@@ -112,6 +112,7 @@ void main() {
     expect(find.text('已添加'), findsNothing);
     pod.setSelectedIndex(1);
     await tester.pump();
+    await tester.pump(addedSongAlignDuration);
 
     final added = tester.widget<Container>(
       find.byKey(const ValueKey('playlist_add_song:pl1_1')),
@@ -125,6 +126,12 @@ void main() {
     );
     expect(addedTexts.first.style?.fontWeight, FontWeight.w700);
     expect(addedTexts.elementAt(1).style?.fontWeight, FontWeight.w700);
+    final addedRow = tester.getRect(
+      find.byKey(const ValueKey('playlist_add_song:pl1_1')),
+    );
+    final addedTitle = tester.getRect(find.text('晴天'));
+    expect(addedTitle.right, closeTo(addedRow.right - 10, 1.5));
+    expect(addedTitle.left, greaterThan(addedRow.left + 20));
 
     final plain = tester.widget<Container>(
       find.byKey(const ValueKey('playlist_add_song:pl1_2')),
@@ -140,7 +147,54 @@ void main() {
       ),
     );
     expect(plainTexts.elementAt(1).style?.fontWeight, FontWeight.w500);
-    await _saveShot(tester, 'playlist-add-vc41.png');
+    final plainRow = tester.getRect(
+      find.byKey(const ValueKey('playlist_add_song:pl1_2')),
+    );
+    final plainTitle = tester.getRect(find.text('七里香'));
+    expect(plainTitle.left, closeTo(plainRow.left + 10, 1.5));
+    await _saveShot(tester, 'playlist-add-vc42.png');
+
+    final leftBefore = plainTitle.left;
+    pod.onSelect();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 150));
+    final mid = tester.getRect(find.text('七里香')).left;
+    expect(mid, greaterThan(leftBefore + 12));
+    await tester.pump(addedSongAlignDuration);
+    final joinedRow = tester.getRect(
+      find.byKey(const ValueKey('playlist_add_song:pl1_2')),
+    );
+    final joined = tester.getRect(find.text('七里香'));
+    expect(joined.right, closeTo(joinedRow.right - 10, 1.5));
+
+    pod.onSelect();
+    await tester.pump();
+    await tester.pump(addedSongAlignDuration);
+    final returned = tester.getRect(find.text('七里香'));
+    final returnedRow = tester.getRect(
+      find.byKey(const ValueKey('playlist_add_song:pl1_2')),
+    );
+    expect(returned.left, closeTo(returnedRow.left + 10, 1.5));
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('click_wheel_center'))),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 130));
+    final pressed = tester.widget<Transform>(
+      find.byKey(const Key('click_wheel_center_face')),
+    );
+    expect(pressed.transform.storage[0], lessThan(0.92));
+    expect(pressed.transform.getTranslation().y, greaterThan(3));
+    await _saveShot(tester, 'center-press-vc42.png');
+    await gesture.up();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 320));
+    final released = tester.widget<Transform>(
+      find.byKey(const Key('click_wheel_center_face')),
+    );
+    expect(released.transform.storage[0], closeTo(1, 0.04));
+    expect(released.transform.getTranslation().y, closeTo(0, 0.2));
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 50));

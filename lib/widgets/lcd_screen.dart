@@ -18,6 +18,9 @@ import 'edge_scroll.dart';
 /// Light-blue wash for songs that are already in the playlist being edited.
 const Color addedSongRowColor = Color(0xFFC5E6F6);
 
+/// Slide of an already-added title and artist between the two edges.
+const Duration addedSongAlignDuration = Duration(milliseconds: 320);
+
 class LcdScreen extends StatefulWidget {
   final PodTheme theme;
 
@@ -31,6 +34,11 @@ class _LcdScreenState extends State<LcdScreen> {
   final ScrollController _scrollController = ScrollController();
   String? _trackedScreenId;
   int? _anchoredIndex;
+
+  /// Settled slide position for add-to-playlist rows, so a recycled row does
+  /// not replay the move. Cleared when that screen is left.
+  final Map<String, double> _addSongShift = {};
+  String? _addSongScreen;
 
   /// Single-line menus at depth 1–2 (home, Music, Settings, and the
   /// artist / album directories). Deeper track lists do not use these.
@@ -358,6 +366,14 @@ class _LcdScreenState extends State<LcdScreen> {
   Widget _buildMenuList(PodState pod, PodMenuScreen screen, int selectedIdx) {
     final twoLine = screen.useTwoLineRows;
     final itemHeight = twoLine ? _songRowHeight : _menuRowHeight;
+    final slideAdded = screen.id.startsWith('playlist_add:');
+    if (!slideAdded) {
+      _addSongShift.clear();
+      _addSongScreen = null;
+    } else if (_addSongScreen != screen.id) {
+      _addSongShift.clear();
+      _addSongScreen = screen.id;
+    }
 
     final listView = ListView.builder(
       controller: _scrollController,
@@ -399,7 +415,7 @@ class _LcdScreenState extends State<LcdScreen> {
             ),
             alignment: twoLine ? Alignment.centerLeft : null,
             child: twoLine
-                ? _buildTwoLineRow(item, isSelected)
+                ? _buildTwoLineRow(item, isSelected, slideAdded: slideAdded)
                 : _buildSingleLineRow(
                     item,
                     isSelected,
@@ -474,41 +490,53 @@ class _LcdScreenState extends State<LcdScreen> {
     );
   }
 
-  Widget _buildTwoLineRow(PodMenuItem item, bool isSelected) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Text(
-          item.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: isSelected
-                ? ClassicGlass.selectedText
-                : widget.theme.lcdText,
-            fontSize: _songTitleSize,
-            fontWeight: isSelected || item.alreadyAdded
-                ? FontWeight.w700
-                : FontWeight.w600,
-            height: 1.12,
-          ),
-        ),
-        if (item.subtitle != null)
-          Text(
-            item.subtitle!,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: isSelected
-                  ? ClassicGlass.selectedText.withValues(alpha: 0.92)
-                  : widget.theme.lcdSubtext,
-              fontSize: _songSubtitleSize,
-              fontWeight: item.alreadyAdded ? FontWeight.w700 : FontWeight.w500,
-              height: 1.12,
-            ),
-          ),
-      ],
+  Widget _buildTwoLineRow(
+    PodMenuItem item,
+    bool isSelected, {
+    required bool slideAdded,
+  }) {
+    final titleStyle = TextStyle(
+      color: isSelected ? ClassicGlass.selectedText : widget.theme.lcdText,
+      fontSize: _songTitleSize,
+      fontWeight: isSelected || item.alreadyAdded
+          ? FontWeight.w700
+          : FontWeight.w600,
+      height: 1.12,
+    );
+    final subtitleStyle = TextStyle(
+      color: isSelected
+          ? ClassicGlass.selectedText.withValues(alpha: 0.92)
+          : widget.theme.lcdSubtext,
+      fontSize: _songSubtitleSize,
+      fontWeight: item.alreadyAdded ? FontWeight.w700 : FontWeight.w500,
+      height: 1.12,
+    );
+    Widget line(String text, TextStyle style) {
+      return Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: style,
+      );
+    }
+
+    final title = line(item.title, titleStyle);
+    final subtitle = item.subtitle == null
+        ? null
+        : line(item.subtitle!, subtitleStyle);
+    if (!slideAdded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [title, ?subtitle],
+      );
+    }
+    return _AddSongShift(
+      id: item.id,
+      alignRight: item.alreadyAdded,
+      memory: _addSongShift,
+      title: title,
+      subtitle: subtitle,
     );
   }
 
@@ -1679,5 +1707,109 @@ class _PlaylistNameFieldState extends State<_PlaylistNameField> {
         onSubmitted: (_) => widget.onSubmit(),
       ),
     );
+  }
+}
+
+/// Slides the title and artist between the left and right edges.
+class _AddSongShift extends StatefulWidget {
+  final String id;
+  final bool alignRight;
+  final Map<String, double> memory;
+  final Widget title;
+  final Widget? subtitle;
+
+  const _AddSongShift({
+    required this.id,
+    required this.alignRight,
+    required this.memory,
+    required this.title,
+    required this.subtitle,
+  });
+
+  @override
+  State<_AddSongShift> createState() => _AddSongShiftState();
+}
+
+class _AddSongShiftState extends State<_AddSongShift>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late double _from;
+  late double _to;
+
+  double get _t {
+    final curved = Curves.easeOutCubic.transform(_controller.value);
+    return _from + (_to - _from) * curved;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: addedSongAlignDuration,
+    );
+    final target = widget.alignRight ? 1.0 : 0.0;
+    final known = widget.memory[widget.id];
+    _from = known ?? 0;
+    _to = target;
+    if (_from == _to) {
+      _controller.value = 1;
+      widget.memory[widget.id] = _to;
+    } else {
+      _controller.forward().whenComplete(_remember);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _AddSongShift oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final target = widget.alignRight ? 1.0 : 0.0;
+    if (widget.id != oldWidget.id) {
+      _from = widget.memory[widget.id] ?? 0;
+      _to = target;
+      if (_from == _to) {
+        _controller.value = 1;
+        widget.memory[widget.id] = _to;
+      } else {
+        _controller.forward(from: 0).whenComplete(_remember);
+      }
+      return;
+    }
+    if (target == _to) return;
+    _from = _t;
+    _to = target;
+    _controller.forward(from: 0).whenComplete(_remember);
+  }
+
+  void _remember() {
+    if (!mounted) return;
+    widget.memory[widget.id] = _to;
+  }
+
+  @override
+  void dispose() {
+    widget.memory[widget.id] = _t;
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        return Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _placed(widget.title),
+            if (widget.subtitle != null) _placed(widget.subtitle!),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _placed(Widget child) {
+    return Align(alignment: Alignment(-1 + 2 * _t, 0), child: child);
   }
 }

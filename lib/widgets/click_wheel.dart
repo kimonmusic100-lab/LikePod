@@ -30,7 +30,8 @@ class ClickWheel extends StatefulWidget {
   State<ClickWheel> createState() => _ClickWheelState();
 }
 
-class _ClickWheelState extends State<ClickWheel> {
+class _ClickWheelState extends State<ClickWheel>
+    with SingleTickerProviderStateMixin {
   double? _lastAngle;
   double _accumulatedAngle = 0.0;
   static const double _stepThreshold =
@@ -39,11 +40,46 @@ class _ClickWheelState extends State<ClickWheel> {
   /// Classic center button, a little larger than the previous 28% dot.
   static const double _centerFraction = 0.32;
 
-  bool _isCenterPressed = false;
   bool _isMenuPressed = false;
   bool _isPlayPressed = false;
   bool _isPrevPressed = false;
   bool _isNextPressed = false;
+
+  late final AnimationController _centerPress;
+
+  @override
+  void initState() {
+    super.initState();
+    _centerPress = AnimationController(
+      vsync: this,
+      lowerBound: -0.5,
+      upperBound: 1.2,
+      value: 0,
+      duration: const Duration(milliseconds: 110),
+    );
+  }
+
+  @override
+  void dispose() {
+    _centerPress.dispose();
+    super.dispose();
+  }
+
+  void _depressCenter() {
+    _centerPress.animateTo(
+      1,
+      duration: const Duration(milliseconds: 110),
+      curve: Curves.easeIn,
+    );
+  }
+
+  void _releaseCenter() {
+    _centerPress.animateTo(
+      0,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.elasticOut,
+    );
+  }
 
   double _getAngle(Offset localPos, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
@@ -220,59 +256,95 @@ class _ClickWheelState extends State<ClickWheel> {
                   ),
 
                   Listener(
-                    onPointerDown: (_) =>
-                        setState(() => _isCenterPressed = true),
-                    onPointerUp: (_) =>
-                        setState(() => _isCenterPressed = false),
-                    onPointerCancel: (_) =>
-                        setState(() => _isCenterPressed = false),
+                    onPointerDown: (_) => _depressCenter(),
+                    onPointerUp: (_) => _releaseCenter(),
+                    onPointerCancel: (_) => _releaseCenter(),
                     child: GestureDetector(
                       key: const Key('click_wheel_center'),
                       behavior: HitTestBehavior.opaque,
                       onTap: widget.onSelect,
                       onLongPress: widget.onCenterLongPress,
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 80),
-                        width: diameter * _centerFraction,
-                        height: diameter * _centerFraction,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: _isCenterPressed
-                              ? widget.theme.centerButton.withValues(
-                                  alpha: 0.85,
-                                )
-                              : widget.theme.centerButton,
-                          border: Border.all(
-                            color: widget.theme.wheelRim.withValues(alpha: 0.6),
-                            width: 1.0,
-                          ),
-                          boxShadow: _isCenterPressed
-                              ? [
+                      child: AnimatedBuilder(
+                        animation: _centerPress,
+                        builder: (context, _) {
+                          final t = _centerPress.value;
+                          final press = t.clamp(0.0, 1.0);
+                          final button = widget.theme.centerButton;
+                          final sunk = Color.lerp(
+                            button,
+                            const Color(0xFF000000),
+                            0.24 * press,
+                          )!;
+                          final lip = Color.lerp(
+                            button,
+                            const Color(0xFFFFFFFF),
+                            0.42 * (1 - press),
+                          )!;
+                          return Transform(
+                            key: const Key('click_wheel_center_face'),
+                            alignment: Alignment.center,
+                            transform: Matrix4.identity()
+                              ..translateByDouble(0, 4.2 * t, 0, 1)
+                              ..scaleByDouble(1 - 0.12 * t, 1 - 0.12 * t, 1, 1),
+                            child: Container(
+                              width: diameter * _centerFraction,
+                              height: diameter * _centerFraction,
+                              foregroundDecoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: RadialGradient(
+                                  center: const Alignment(0, -0.55),
+                                  radius: 0.95,
+                                  colors: [
+                                    Colors.black.withValues(alpha: 0.34 * press),
+                                    Colors.transparent,
+                                  ],
+                                ),
+                              ),
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Color.lerp(
+                                    widget.theme.wheelRim.withValues(
+                                      alpha: 0.6,
+                                    ),
+                                    const Color(0xFF000000),
+                                    0.25 * press,
+                                  )!,
+                                  width: 1.0,
+                                ),
+                                boxShadow: [
                                   BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.2),
-                                    blurRadius: 2,
-                                    offset: const Offset(0, 1),
+                                    color: Colors.black.withValues(
+                                      alpha: 0.20 * (1 - press),
+                                    ),
+                                    blurRadius: 1 + 4 * (1 - press),
+                                    offset: Offset(0, 2.2 * (1 - press)),
                                   ),
-                                ]
-                              : [
                                   BoxShadow(
-                                    color: Colors.black.withValues(alpha: 0.08),
-                                    blurRadius: 4,
-                                    offset: const Offset(0, 2),
-                                  ),
-                                  BoxShadow(
-                                    color: Colors.white.withValues(alpha: 0.5),
+                                    color: Colors.white.withValues(
+                                      alpha: 0.50 * (1 - press),
+                                    ),
                                     blurRadius: 2,
-                                    offset: const Offset(0, -1),
+                                    offset: Offset(0, -1 * (1 - press)),
                                   ),
                                 ],
-                          gradient: RadialGradient(
-                            colors: [
-                              widget.theme.centerButton,
-                              widget.theme.centerButton.withValues(alpha: 0.9),
-                            ],
-                          ),
-                        ),
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [
+                                    Color.lerp(
+                                      button,
+                                      const Color(0xFF000000),
+                                      0.38 * press,
+                                    )!,
+                                    sunk,
+                                    lip,
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
                       ),
                     ),
                   ),
