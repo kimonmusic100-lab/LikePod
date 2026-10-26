@@ -23,7 +23,7 @@ void main() {
       appName: 'LikePod',
       packageName: 'com.likepod.likepod',
       version: '0.1.0',
-      buildNumber: '49',
+      buildNumber: '50',
       buildSignature: '',
     );
     tester.view.physicalSize = const Size(800, 1600);
@@ -57,7 +57,7 @@ void main() {
     expect(find.text('LikePod'), findsWidgets);
     expect(find.text('Version 0.1.0'), findsOneWidget);
     expect(find.text('作者：Kimonmusic'), findsOneWidget);
-    await _saveShot(tester, 'about-vc49.png');
+    await _saveShot(tester, 'about-vc50.png');
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 50));
