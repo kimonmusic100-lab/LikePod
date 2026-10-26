@@ -55,6 +55,7 @@ class MainActivity : AudioServiceActivity() {
     private var deviceCallbackRegistered = false
     private var outputCallback: AudioDeviceCallback? = null
     private var deviceEvent: Runnable? = null
+    private var trackSpectrum: TrackSpectrum? = null
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -77,6 +78,9 @@ class MainActivity : AudioServiceActivity() {
                 }
             }
         WheelSounds.prepare(this)
+        trackSpectrum = TrackSpectrum(flutterEngine.dartExecutor.binaryMessenger).also {
+            it.attach()
+        }
         registerOutputWatcher()
 
         channel.setMethodCallHandler { call, result ->
@@ -416,6 +420,8 @@ class MainActivity : AudioServiceActivity() {
         outputCallback = null
         deviceCallbackRegistered = false
         deviceEvent?.let { mainHandler.removeCallbacks(it) }
+        trackSpectrum?.release()
+        trackSpectrum = null
         super.onDestroy()
     }
 }

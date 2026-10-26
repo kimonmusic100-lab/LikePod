@@ -614,87 +614,97 @@ class _LcdScreenState extends State<LcdScreen> {
                       }
                       var coverWidth = coverHeight - rightPull;
                       if (coverWidth < 24) coverWidth = coverHeight;
-                      return Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                      final waveBottom = nowPlayingWaveBottom(
+                        areaHeight: constraints.maxHeight,
+                        coverHeight: coverHeight,
+                      );
+                      return Stack(
+                        fit: StackFit.expand,
                         children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                          Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              _build3DCoverArtwork(
-                                pod,
-                                coverWidth,
-                                coverHeight,
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisAlignment: MainAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      pod.currentTitle,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: widget.theme.lcdText,
-                                        fontSize: 16.5,
-                                        fontWeight: FontWeight.w700,
-                                        height: 1.2,
-                                      ),
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _build3DCoverArtwork(
+                                    pod,
+                                    coverWidth,
+                                    coverHeight,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          pod.currentTitle,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: widget.theme.lcdText,
+                                            fontSize: 16.5,
+                                            fontWeight: FontWeight.w700,
+                                            height: 1.2,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          pod.currentArtist,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: widget.theme.lcdSubtext,
+                                            fontSize: 14.0,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          pod.currentAlbum,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: widget.theme.lcdSubtext
+                                                .withValues(alpha: 0.8),
+                                            fontSize: 12.5,
+                                            fontWeight: FontWeight.w400,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          pod.queueLength > 0
+                                              ? '${pod.queuePosition}/${pod.queueLength}  ${pod.playModeLabel}'
+                                              : pod.playModeLabel,
+                                          style: TextStyle(
+                                            color: widget.theme.lcdSubtext,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      pod.currentArtist,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: widget.theme.lcdSubtext,
-                                        fontSize: 14.0,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      pod.currentAlbum,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: widget.theme.lcdSubtext
-                                            .withValues(alpha: 0.8),
-                                        fontSize: 12.5,
-                                        fontWeight: FontWeight.w400,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      pod.queueLength > 0
-                                          ? '${pod.queuePosition}/${pod.queueLength}  ${pod.playModeLabel}'
-                                          : pod.playModeLabel,
-                                      style: TextStyle(
-                                        color: widget.theme.lcdSubtext,
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                                  ),
+                                ],
                               ),
                             ],
+                          ),
+                          Positioned(
+                            left: 2,
+                            right: 2,
+                            bottom: waveBottom,
+                            child: NowPlayingWave(
+                              style: pod.waveStyle,
+                              color: widget.theme.lcdText,
+                            ),
                           ),
                         ],
                       );
                     },
                   ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 0, 14, 2),
-                child: NowPlayingWave(
-                  style: pod.waveStyle,
-                  playing: pod.isPlaying,
-                  positionSeconds: pod.currentPositionSeconds,
-                  title: pod.currentTitle,
-                  color: widget.theme.lcdText,
                 ),
               ),
               Padding(

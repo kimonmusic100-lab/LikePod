@@ -268,18 +268,6 @@ class _ClickWheelState extends State<ClickWheel>
                         animation: _centerPress,
                         builder: (context, _) {
                           final t = _centerPress.value;
-                          final press = t.clamp(0.0, 1.0);
-                          final button = widget.theme.centerButton;
-                          final sunk = Color.lerp(
-                            button,
-                            const Color(0xFF000000),
-                            0.24 * press,
-                          )!;
-                          final lip = Color.lerp(
-                            button,
-                            const Color(0xFFFFFFFF),
-                            0.42 * (1 - press),
-                          )!;
                           return Transform(
                             key: const Key('click_wheel_center_face'),
                             alignment: Alignment.center,
@@ -289,56 +277,33 @@ class _ClickWheelState extends State<ClickWheel>
                             child: Container(
                               width: diameter * _centerFraction,
                               height: diameter * _centerFraction,
-                              foregroundDecoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: RadialGradient(
-                                  center: const Alignment(0, -0.55),
-                                  radius: 0.95,
-                                  colors: [
-                                    Colors.black.withValues(alpha: 0.34 * press),
-                                    Colors.transparent,
-                                  ],
-                                ),
-                              ),
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
+                                color: widget.theme.centerButton,
                                 border: Border.all(
-                                  color: Color.lerp(
-                                    widget.theme.wheelRim.withValues(
-                                      alpha: 0.6,
-                                    ),
-                                    const Color(0xFF000000),
-                                    0.25 * press,
-                                  )!,
+                                  color: widget.theme.wheelRim.withValues(
+                                    alpha: 0.6,
+                                  ),
                                   width: 1.0,
                                 ),
                                 boxShadow: [
                                   BoxShadow(
-                                    color: Colors.black.withValues(
-                                      alpha: 0.20 * (1 - press),
-                                    ),
-                                    blurRadius: 1 + 4 * (1 - press),
-                                    offset: Offset(0, 2.2 * (1 - press)),
+                                    color: Colors.black.withValues(alpha: 0.08),
+                                    blurRadius: 4,
+                                    offset: const Offset(0, 2),
                                   ),
                                   BoxShadow(
-                                    color: Colors.white.withValues(
-                                      alpha: 0.50 * (1 - press),
-                                    ),
+                                    color: Colors.white.withValues(alpha: 0.5),
                                     blurRadius: 2,
-                                    offset: Offset(0, -1 * (1 - press)),
+                                    offset: const Offset(0, -1),
                                   ),
                                 ],
-                                gradient: LinearGradient(
-                                  begin: Alignment.topCenter,
-                                  end: Alignment.bottomCenter,
+                                gradient: RadialGradient(
                                   colors: [
-                                    Color.lerp(
-                                      button,
-                                      const Color(0xFF000000),
-                                      0.38 * press,
-                                    )!,
-                                    sunk,
-                                    lip,
+                                    widget.theme.centerButton,
+                                    widget.theme.centerButton.withValues(
+                                      alpha: 0.9,
+                                    ),
                                   ],
                                 ),
                               ),

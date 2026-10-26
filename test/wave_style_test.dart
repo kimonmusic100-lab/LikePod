@@ -1,30 +1,39 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:likepod/services/wave_style.dart';
+import 'package:likepod/widgets/now_playing_wave.dart';
 
 void main() {
-  test('playhead levels stay in range and change with phase', () {
-    final early = waveLevels(phase: 0.4, seed: 19);
-    final later = waveLevels(phase: 2.2, seed: 19);
-    expect(early, hasLength(waveBandCount));
-    expect(later, hasLength(waveBandCount));
-    for (final level in early) {
-      expect(level, inInclusiveRange(0, 1));
-    }
-    expect(early, isNot(equals(later)));
-    final samples = waveSamples(phase: 1.1, seed: 19);
-    expect(samples, hasLength(waveSampleCount));
-    for (final sample in samples) {
-      expect(sample, inInclusiveRange(-1, 1));
-    }
+  test('only the three kept styles, and retired names use the mirror', () {
+    expect(WaveStyle.values, hasLength(3));
+    expect(WaveStyle.fromName('mirror').label, '镜像柱');
+    expect(WaveStyle.fromName('dots').label, '点阵柱');
+    expect(WaveStyle.fromName('glow').label, '柔光柱');
+    expect(WaveStyle.fromName(null), WaveStyle.mirror);
+    expect(WaveStyle.fromName('bars'), WaveStyle.mirror);
+    expect(WaveStyle.fromName('radial'), WaveStyle.mirror);
+    expect(WaveStyle.fromName('nope'), WaveStyle.mirror);
   });
 
-  test('style names round-trip and a fresh install uses mirrored bars', () {
-    expect(WaveStyle.values, hasLength(10));
-    expect(WaveStyle.fromName('radial'), WaveStyle.radial);
-    expect(WaveStyle.fromName('lines').label, '极简细线');
-    expect(WaveStyle.fromName('bars'), WaveStyle.bars);
-    expect(WaveStyle.fromName(null), WaveStyle.mirror);
-    expect(WaveStyle.fromName('nope'), WaveStyle.mirror);
-    expect(waveSeed('晴天'), isNot(waveSeed('七里香')));
+  test('spectrum easing rises faster than it falls', () {
+    final quiet = List<double>.filled(spectrumBandCount, 0);
+    final hit = List<double>.filled(spectrumBandCount, 0);
+    hit[12] = 1;
+    final risen = smoothSpectrum(quiet, hit);
+    expect(risen[12], greaterThan(0.35));
+    expect(risen[12], lessThan(0.85));
+    expect(risen[0], lessThan(0.08));
+
+    final loud = List<double>.filled(spectrumBandCount, 1);
+    final fallen = smoothSpectrum(loud, quiet);
+    expect(fallen[12], greaterThan(0.6));
+    expect(fallen[12], lessThan(0.9));
+    expect(fallen[12], greaterThan(1 - risen[12]));
+  });
+
+  test('the waveform sits under the cover and clear of the progress bar', () {
+    final roomy = nowPlayingWaveBottom(areaHeight: 360, coverHeight: 140);
+    expect(roomy, greaterThanOrEqualTo(22));
+    final tight = nowPlayingWaveBottom(areaHeight: 140, coverHeight: 100);
+    expect(tight, greaterThanOrEqualTo(10));
   });
 }

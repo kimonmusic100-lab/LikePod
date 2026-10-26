@@ -18,7 +18,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # of the product and file versions while build-number is used as the build suffix.
 # versionName 归零为 0.1.0(定版);versionCode 必须单调递增,
 # 否则无法覆盖安装旧设备上的 0.1.6+19。
-version: 0.1.0+43
+version: 0.1.0+44
 
 environment:
   sdk: ^3.13.5

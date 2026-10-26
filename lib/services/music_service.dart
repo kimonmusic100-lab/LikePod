@@ -11,6 +11,7 @@ import '../models/song_model.dart';
 import 'audio_engine.dart';
 import 'focus_route.dart';
 import 'output_probe.dart';
+import 'spectrum_feed.dart';
 
 enum PodShuffleMode { off, songs }
 
@@ -28,6 +29,7 @@ class MusicService {
   final AudioEngine _engine = AudioEngine();
   bool _askedNotificationPermission = false;
   bool _anchorHooked = false;
+  bool _spectrumHooked = false;
   bool _intendPlay = false;
   final FocusYield _focusYield = FocusYield();
 
@@ -138,9 +140,23 @@ class MusicService {
       _anchorHooked = true;
       player.playingStream.listen((playing) {
         unawaited(anchorPlayback(playing));
+        unawaited(_followSpectrum(player, playing));
+      });
+    }
+    if (ok && player != null && !_spectrumHooked) {
+      _spectrumHooked = true;
+      player.androidAudioSessionIdStream.listen((_) {
+        unawaited(_followSpectrum(player, player.playing));
       });
     }
     return ok;
+  }
+
+  Future<void> _followSpectrum(AudioPlayer player, bool playing) {
+    return SpectrumFeed.instance.follow(
+      playing ? player.androidAudioSessionId : null,
+      playing: playing,
+    );
   }
 
   /// Holds audio focus and the playback foreground service while [playing],

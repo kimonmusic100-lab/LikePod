@@ -51,7 +51,7 @@ void main() {
         playlists: [
           UserPlaylist(id: 'pl1', name: '通勤', songIds: [12, 4]),
         ],
-        waveStyle: 'radial',
+        waveStyle: 'glow',
       ),
     );
 
@@ -74,7 +74,7 @@ void main() {
     ]);
     expect(loaded.playlists.single.name, '通勤');
     expect(loaded.playlists.single.songIds, [12, 4]);
-    expect(loaded.waveStyle, 'radial');
+    expect(loaded.waveStyle, 'glow');
   });
 
   test('music folders decode tolerates junk and empty means all', () async {
