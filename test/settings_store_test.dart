@@ -27,6 +27,7 @@ void main() {
     expect(settings.lastPositionMs, 0);
     expect(settings.lastQueueIds, isEmpty);
     expect(settings.playlists, isEmpty);
+    expect(settings.waveStyle, 'bars');
   });
 
   test('theme, ratings, and resume point round-trip', () async {
@@ -41,12 +42,16 @@ void main() {
         volume: 0.42,
         ratings: {12: 5, 4: 0, -1: 3},
         lastSongId: 12,
-        musicFolders: ['/storage/emulated/0/Music', '/storage/0000-0000/Netease'],
+        musicFolders: [
+          '/storage/emulated/0/Music',
+          '/storage/0000-0000/Netease',
+        ],
         lastPositionMs: 18600,
         lastQueueIds: [12, 4, -1],
         playlists: [
           UserPlaylist(id: 'pl1', name: '通勤', songIds: [12, 4]),
         ],
+        waveStyle: 'radial',
       ),
     );
 
@@ -69,11 +74,13 @@ void main() {
     ]);
     expect(loaded.playlists.single.name, '通勤');
     expect(loaded.playlists.single.songIds, [12, 4]);
+    expect(loaded.waveStyle, 'radial');
   });
 
   test('music folders decode tolerates junk and empty means all', () async {
     SharedPreferences.setMockInitialValues({
-      SettingsStore.musicFoldersKey: '["/storage/emulated/0/Music", "", 42, null]',
+      SettingsStore.musicFoldersKey:
+          '["/storage/emulated/0/Music", "", 42, null]',
     });
     final store = await SettingsStore.open();
     expect(store.load().musicFolders, ['/storage/emulated/0/Music']);

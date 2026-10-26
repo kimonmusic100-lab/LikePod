@@ -10,6 +10,7 @@ import '../services/music_service.dart';
 import '../services/output_probe.dart';
 import '../services/playlist_library.dart';
 import '../services/settings_store.dart';
+import '../services/wave_style.dart';
 import '../services/sound_service.dart';
 import '../theme/pod_theme.dart';
 
@@ -28,6 +29,7 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
   ShellThemeType _shellType = ShellThemeType.spaceGray;
   bool _soundEnabled = true;
   bool _hapticsEnabled = true;
+  WaveStyle _waveStyle = WaveStyle.bars;
   List<String> _musicFolders = const [];
   List<UserPlaylist> _playlists = const [];
   String _playlistDraft = '';
@@ -131,6 +133,7 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
     _shellType = _parseShell(settings.shell);
     _soundEnabled = settings.soundEnabled;
     _hapticsEnabled = settings.hapticsEnabled;
+    _waveStyle = WaveStyle.fromName(settings.waveStyle);
     _musicFolders = List.unmodifiable(settings.musicFolders);
     // Must be set before the first scan, which runs in MusicService.init().
     _musicService.setMusicFolders(_musicFolders);
@@ -194,6 +197,7 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
           ? _musicService.currentQueueIds
           : List<int>.from(_savedQueueIds),
       playlists: List<UserPlaylist>.from(_playlists),
+      waveStyle: _waveStyle.name,
     );
   }
 
@@ -264,6 +268,17 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
   // Getters
   ShellThemeType get shellType => _shellType;
   bool get soundEnabled => _soundEnabled;
+
+  WaveStyle get waveStyle => _waveStyle;
+
+  void setWaveStyle(WaveStyle style) {
+    if (_waveStyle == style) return;
+    _waveStyle = style;
+    _refreshSettingsMenu();
+    notifyListeners();
+    _schedulePersist(immediate: true);
+  }
+
   bool get hapticsEnabled => _hapticsEnabled;
   PodTheme get currentTheme => PodTheme.getTheme(_shellType);
 
@@ -632,6 +647,12 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
         },
       ),
       PodMenuItem(
+        id: 'wave_style',
+        title: '波形特效',
+        subtitle: _waveStyle.label,
+        subMenuItems: _waveStyleItems,
+      ),
+      PodMenuItem(
         id: 'haptics',
         title: '触感反馈',
         subtitle: _hapticsEnabled ? '打开' : '关闭',
@@ -755,6 +776,9 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
       if (id == 'settings') {
         items = _settingsMenuItems();
         title = '设置';
+      } else if (id == 'wave_style') {
+        items = _waveStyleItems();
+        title = '波形特效';
       } else if (id == 'music_folders') {
         items = _musicFolderItems();
         title = '音乐文件夹';
@@ -1365,9 +1389,42 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
     _pushScreen(_playlistSongScreen(list));
   }
 
-  /// Long-press on the center button. Opens the five playlist actions when
-  /// a playlist row is highlighted, or while that playlist's songs are open.
+  List<PodMenuItem> _waveStyleItems() {
+    return [
+      for (final style in WaveStyle.values)
+        PodMenuItem(
+          id: 'wave:${style.name}',
+          title: style.label,
+          subtitle: style == _waveStyle ? '当前' : null,
+          hasSubmenu: false,
+          onSelect: () => setWaveStyle(style),
+        ),
+    ];
+  }
+
+  void _openWaveStyles() {
+    if (currentScreen.id == 'wave_style') return;
+    _soundService.playSelect(
+      soundEnabled: _soundEnabled,
+      hapticsEnabled: _hapticsEnabled,
+    );
+    _pushScreen(
+      PodMenuScreen(
+        id: 'wave_style',
+        title: '波形特效',
+        isSplitView: false,
+        items: _waveStyleItems(),
+      ),
+    );
+  }
+
+  /// Long-press on the center button. On Now Playing this opens the waveform
+  /// styles. On a playlist it opens the five playlist actions.
   void onCenterLongPress() {
+    if (currentScreen.id == 'now_playing_view') {
+      _openWaveStyles();
+      return;
+    }
     final id = _playlistIdForActions();
     if (id == null) return;
     final list = PlaylistLibrary.find(_playlists, id);

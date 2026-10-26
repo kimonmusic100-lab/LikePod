@@ -14,6 +14,7 @@ import '../theme/pod_theme.dart';
 import 'bluetooth_mark.dart';
 import 'cover_flow_pose.dart';
 import 'edge_scroll.dart';
+import 'now_playing_wave.dart';
 
 /// Light-blue wash for songs that are already in the playlist being edited.
 const Color addedSongRowColor = Color(0xFFC5E6F6);
@@ -684,6 +685,16 @@ class _LcdScreenState extends State<LcdScreen> {
                       );
                     },
                   ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 2),
+                child: NowPlayingWave(
+                  style: pod.waveStyle,
+                  playing: pod.isPlaying,
+                  positionSeconds: pod.currentPositionSeconds,
+                  title: pod.currentTitle,
+                  color: widget.theme.lcdText,
                 ),
               ),
               Padding(
