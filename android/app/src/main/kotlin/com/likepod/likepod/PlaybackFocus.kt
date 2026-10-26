@@ -8,6 +8,7 @@ import android.media.AudioPlaybackConfiguration
 import android.os.Build
 import android.os.Handler
 import android.os.Process
+import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.RequiresApi
 
@@ -20,12 +21,22 @@ import androidx.annotation.RequiresApi
  * loss does not: the loser is dropped from the stack, which is what B站 and
  * many video apps do, so a GAIN callback never arrives.
  *
- * While a yield pause is armed, watch [AudioManager.getActivePlaybackConfigurations].
- * When no other app is still playing, request focus again and resume. Poll
- * while armed so a missed callback still returns. The user abandoning focus
+ * While a yield pause is armed, watch [AudioManager.getActivePlaybackConfigurations],
+ * [AudioManager.isMusicActive], and the focus callbacks. Poll while armed,
+ * and the yield alarm retries the same check. The user abandoning focus
  * (manual pause) clears the arm and must not resume. Cold start never arms.
  * Coming to the foreground only rechecks an arm that already exists; it is
  * not itself a reason to play. The Home transition is not another app.
+ *
+ * 小红书 takes a transient loss, so the stack later delivers
+ * [AudioManager.AUDIOFOCUS_GAIN] and this object resumes without reading
+ * player rows. B站 and many other video apps take a permanent loss. Nothing
+ * delivers GAIN. They also leave a playback row whose hidden player-state
+ * still says started after the activity is gone. Waiting on that row alone
+ * never resumes. A quiet music stream, held briefly so a buffer underrun
+ * is not a handoff, means the output is free even if that row remains.
+ * The row's public state string wins over reflection: a paused/stopped/
+ * idle/released description is not "still playing".
  *
  * While the yield is armed the keepalive service and its wake lock stay up,
  * and a few-second alarm retries the check. Focus loss used to stop that
@@ -33,18 +44,28 @@ import androidx.annotation.RequiresApi
  * ran until the activity was opened. The alarm is not scheduled unless a
  * yield is armed. The comfortable gap before playback is on the Dart side.
  *
- * A playback row pauses us only when its uid is a different app. Our own
- * player, and a row whose uid cannot be read, must not: on PME110 that
- * misread turned "play" into pause → reclaim → play until the process died.
- * The same rule is in `pauseForForeignPlayback`.
+ * A playback row never pauses us by itself. Pause comes from focus loss.
+ * Our own player, and a row whose uid cannot be read, must not count as
+ * another app: on PME110 that misread turned "play" into pause → reclaim
+ * → play until the process died. The same uid rule is in
+ * `pauseForForeignPlayback`.
  */
 object PlaybackFocus {
     private const val TAG = "LikePod"
     private const val RECLAIM_DELAY_MS = 700L
     private const val RECLAIM_POLL_MS = 500L
 
-    /** Covers the Dart gap and fade, then drops the yield wake if play never started. */
-    private const val YIELD_HOLD_AFTER_RESUME_MS = 4000L
+    /**
+     * Covers the 2s Dart gap plus the fade, then drops the yield wake if
+     * play never started.
+     */
+    private const val YIELD_HOLD_AFTER_RESUME_MS = 6000L
+
+    /**
+     * How long the music stream must stay quiet before a leftover started
+     * row from another app stops blocking reclaim.
+     */
+    private const val STALE_QUIET_MS = 1000L
 
     @Volatile
     private var granted = false
@@ -69,6 +90,9 @@ object PlaybackFocus {
     private var reclaimPosted = false
     private var hiddenTried = false
     private var yieldGeneration = 0
+    private var quietSinceMs = 0L
+    private var lastWaitKey: String? = null
+    private var foreignWhileHeld: Set<Int> = emptySet()
     private var mainHandler: Handler? = null
     private var appContext: Context? = null
     private var watcher: AudioManager.AudioPlaybackCallback? = null
@@ -91,9 +115,12 @@ object PlaybackFocus {
         hostLeaving = false
         val missed = lossDuringLeave
         lossDuringLeave = false
-        Log.i(TAG, "host leave settled missedLoss=$missed")
+        val arrived = foreignStartedUids() - foreignWhileHeld
+        Log.i(TAG, "host leave settled missedLoss=$missed arrived=$arrived")
         if (!listening) return
-        if (confirmedForeign()) {
+        // A player uid that was already present is a leftover row, not a
+        // new interrupter. Home used to pause on that leftover.
+        if (missed && arrived.isNotEmpty()) {
             markYield()
         } else if (missed && PlaybackAnchor.isPlaying()) {
             refreshOwnGrant()
@@ -115,6 +142,9 @@ object PlaybackFocus {
         listening = false
         granted = false
         reclaimPosted = false
+        quietSinceMs = 0L
+        lastWaitKey = null
+        foreignWhileHeld = emptySet()
         mainHandler?.removeCallbacks(reclaimRunnable)
         PlaybackAnchor.setYieldHeld(context, false)
         unregisterWatcher()
@@ -147,14 +177,18 @@ object PlaybackFocus {
         // is not a yield. Re-requesting focus here is what echoed a loss
         // back into the pause path.
         if (granted && !awaitingReturn) {
+            foreignWhileHeld = foreignStartedUids()
             Log.i(TAG, "focus already granted")
             return true
         }
         awaitingReturn = false
         reclaimPosted = false
+        quietSinceMs = 0L
+        lastWaitKey = null
         handler.removeCallbacks(reclaimRunnable)
         val code = requestFocus(context, attributes, handler)
         granted = code == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        if (granted) foreignWhileHeld = foreignStartedUids()
         Log.i(TAG, "focus request code=$code granted=$granted")
         return granted
     }
@@ -231,6 +265,9 @@ object PlaybackFocus {
                 granted = true
                 awaitingReturn = false
                 reclaimPosted = false
+                quietSinceMs = 0L
+                lastWaitKey = null
+                foreignWhileHeld = foreignStartedUids()
                 mainHandler?.removeCallbacks(reclaimRunnable)
                 appContext?.let { YieldAlarm.disarm(it) }
                 Log.i(TAG, "focus gain after another app released audio")
@@ -246,6 +283,9 @@ object PlaybackFocus {
         val shouldPause = !awaitingReturn || PlaybackAnchor.isPlaying()
         awaitingReturn = true
         yieldGeneration++
+        quietSinceMs = 0L
+        lastWaitKey = null
+        logPlayback("yield armed")
         // Hold the service before the pause callback. That callback clears
         // the playing flag, which used to stop the service and let the
         // process freeze for the rest of a long video.
@@ -319,6 +359,9 @@ object PlaybackFocus {
         if (code == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             granted = true
             awaitingReturn = false
+            quietSinceMs = 0L
+            lastWaitKey = null
+            foreignWhileHeld = foreignStartedUids()
             appContext?.let { YieldAlarm.disarm(it) }
             onGained?.invoke()
             scheduleYieldRelease()
@@ -347,14 +390,16 @@ object PlaybackFocus {
         val callback = object : AudioManager.AudioPlaybackCallback() {
             override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>) {
                 if (!listening || hostLeaving) return
-                // Pause only for a positively different app. An unreadable
-                // uid is not one: that was our own player on PME110.
-                if (confirmedForeign()) {
-                    if (PlaybackAnchor.isPlaying()) markYield()
-                    else scheduleReclaim()
-                } else if (awaitingReturn) {
-                    scheduleReclaim()
+                // Remember rows while we hold focus so a leftover started
+                // player is not treated as a new interrupter on Home.
+                // Do not pause from this callback. A stale foreign row used
+                // to mark a yield the moment we resumed, which paused us
+                // again. Real pauses come from focus loss.
+                if (!awaitingReturn) {
+                    foreignWhileHeld = foreignStartedUids()
+                    return
                 }
+                scheduleReclaim()
             }
         }
         watcher = callback
@@ -371,36 +416,110 @@ object PlaybackFocus {
         audioManager.unregisterAudioPlaybackCallback(callback)
     }
 
-    /** Started player whose uid is a different application. */
-    private fun confirmedForeign(): Boolean {
-        return playbackRows().any { row ->
-            row.started && row.ownerUid != null &&
-                row.ownerUid != row.selfUid && row.ownerUid >= Process.FIRST_APPLICATION_UID
-        }
-    }
-
     /**
      * True while reclaim must wait.
      * Same cases as [foreignPlaybackBlocksReclaim] in Dart.
+     * A confirmed other app blocks while music is active, and for
+     * [STALE_QUIET_MS] after the stream goes quiet. A phone call always
+     * blocks. An unreadable started row blocks only while music is active.
      */
     private fun blocksReclaim(): Boolean {
-        val rows = playbackRows()
-        if (rows.any { row ->
-                row.started && row.ownerUid != null &&
-                    row.ownerUid != row.selfUid &&
-                    row.ownerUid >= Process.FIRST_APPLICATION_UID
-            }
-        ) {
-            return true
+        val decision = evaluateReclaim()
+        if (decision.key != lastWaitKey) {
+            lastWaitKey = decision.key
+            Log.i(TAG, decision.detail)
         }
-        val unknownStarted = rows.any { row -> row.started && row.ownerUid == null }
-        if (!unknownStarted || PlaybackAnchor.isPlaying()) return false
-        val app = appContext ?: return true
-        val audioManager = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        return audioManager.isMusicActive
+        return decision.blocked
     }
 
-    private data class PlaybackRow(val ownerUid: Int?, val selfUid: Int, val started: Boolean)
+    private data class ReclaimDecision(val blocked: Boolean, val key: String, val detail: String)
+
+    private fun evaluateReclaim(): ReclaimDecision {
+        val app = appContext
+            ?: return ReclaimDecision(true, "no-context", "reclaim waiting reason=no-context")
+        val audioManager = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val mode = audioManager.mode
+        val inCall = mode == AudioManager.MODE_IN_CALL ||
+            mode == AudioManager.MODE_IN_COMMUNICATION ||
+            mode == AudioManager.MODE_RINGTONE ||
+            (Build.VERSION.SDK_INT >= 30 && mode == AudioManager.MODE_CALL_SCREENING)
+        if (inCall) {
+            quietSinceMs = 0L
+            return ReclaimDecision(true, "call", "reclaim waiting reason=call mode=$mode")
+        }
+        val rows = playbackRows()
+        val foreign = rows.any { it.isOtherApp }
+        val unknownStarted = rows.any { it.started && it.ownerUid == null }
+        val music = audioManager.isMusicActive
+        val described = describeRows(rows)
+        if (music) {
+            quietSinceMs = 0L
+            if (foreign) {
+                return ReclaimDecision(
+                    true,
+                    "foreign",
+                    "reclaim waiting reason=foreign music=1 $described",
+                )
+            }
+            if (unknownStarted && !PlaybackAnchor.isPlaying()) {
+                return ReclaimDecision(
+                    true,
+                    "unknown",
+                    "reclaim waiting reason=unknown music=1 $described",
+                )
+            }
+            return ReclaimDecision(false, "clear", "reclaim clear reason=music-ours $described")
+        }
+        if (!foreign) {
+            quietSinceMs = 0L
+            return ReclaimDecision(false, "clear", "reclaim clear reason=silent $described")
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (quietSinceMs == 0L) quietSinceMs = now
+        val quietFor = now - quietSinceMs
+        if (quietFor < STALE_QUIET_MS) {
+            return ReclaimDecision(
+                true,
+                "quiet-hold",
+                "reclaim waiting reason=quiet-hold quietMs=$quietFor $described",
+            )
+        }
+        return ReclaimDecision(
+            false,
+            "clear",
+            "reclaim clear reason=stale-foreign quietMs=$quietFor $described",
+        )
+    }
+
+    private fun describeRows(rows: List<PlaybackRow>): String {
+        if (rows.isEmpty()) return "rows=0"
+        return rows.joinToString(";") { row ->
+            "uid=${row.ownerUid} started=${row.started} state=${row.describedState} raw=${row.raw}"
+        }
+    }
+
+    private fun logPlayback(reason: String) {
+        val app = appContext
+        val music = if (app == null) {
+            null
+        } else {
+            val audioManager = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            audioManager.isMusicActive
+        }
+        Log.i(TAG, "$reason music=$music ${describeRows(playbackRows())}")
+    }
+
+    private data class PlaybackRow(
+        val ownerUid: Int?,
+        val selfUid: Int,
+        val started: Boolean,
+        val describedState: String?,
+        val raw: String,
+    ) {
+        val isOtherApp: Boolean
+            get() = started && ownerUid != null && ownerUid != selfUid &&
+                ownerUid >= Process.FIRST_APPLICATION_UID
+    }
 
     private fun playbackRows(): List<PlaybackRow> {
         val app = appContext ?: return emptyList()
@@ -417,8 +536,9 @@ object PlaybackFocus {
                 uid >= Process.FIRST_APPLICATION_UID -> uid
                 else -> null
             }
-            val started = playerStarted(config) ?: (stateIn(described) == "started")
-            PlaybackRow(owner, myUid, started)
+            val describedState = stateIn(described)
+            val started = rowStarted(playerStarted(config), describedState)
+            PlaybackRow(owner, myUid, started, describedState, described.take(160))
         }
     }
 
@@ -478,14 +598,44 @@ object PlaybackFocus {
         }
     }
 
+    /** Same rule as `playbackRowStarted` in Dart. The public state wins. */
+    private fun rowStarted(reflected: Boolean?, describedState: String?): Boolean {
+        return when (describedState) {
+            "paused", "stopped", "idle", "released" -> false
+            "started" -> true
+            else -> reflected == true
+        }
+    }
+
+    private fun foreignStartedUids(): Set<Int> {
+        return playbackRows().mapNotNull { row ->
+            if (row.isOtherApp) row.ownerUid else null
+        }.toSet()
+    }
+
     private fun uidIn(described: String): Int? {
-        val match = Regex("""u/pid:(\d+)/""").find(described) ?: return null
-        return match.groupValues[1].toIntOrNull()
+        val patterns = listOf(
+            Regex("""u/pid:(\d+)/"""),
+            Regex("""(?i)clientUid[=:](\d+)"""),
+            Regex("""(?i)\buid[=:](\d+)"""),
+        )
+        for (pattern in patterns) {
+            val value = pattern.find(described)?.groupValues?.get(1)?.toIntOrNull()
+            if (value != null && value >= 0) return value
+        }
+        return null
     }
 
     private fun stateIn(described: String): String? {
-        val match = Regex("""(?<![A-Za-z])state:([A-Za-z]+)""").find(described) ?: return null
-        return match.groupValues[1].lowercase()
+        val patterns = listOf(
+            Regex("""(?<![A-Za-z])state:([A-Za-z]+)"""),
+            Regex("""(?i)playerState[=:]([A-Za-z]+)"""),
+        )
+        for (pattern in patterns) {
+            val value = pattern.find(described)?.groupValues?.get(1)?.lowercase()
+            if (value != null) return value
+        }
+        return null
     }
 
     @RequiresApi(26)

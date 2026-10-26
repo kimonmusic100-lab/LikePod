@@ -94,9 +94,8 @@ void main() {
     );
   });
 
-  test('a yield resume waits, then fades back to unity', () {
-    expect(yieldResumeGap, const Duration(milliseconds: 600));
-    expect(yieldResumeGap.inMilliseconds, inInclusiveRange(400, 800));
+  test('a yield resume waits two seconds, then fades back to unity', () {
+    expect(yieldResumeGap, const Duration(milliseconds: 2000));
     expect(yieldFadeDuration, const Duration(milliseconds: 800));
     expect(yieldFadeDuration.inMilliseconds, inInclusiveRange(500, 1000));
     expect(resumeDelay(fromFocusYield: false), Duration.zero);
@@ -159,6 +158,113 @@ void main() {
         musicActive: true,
       ),
       isTrue,
+    );
+  });
+
+  test('a quiet leftover row from another app does not pin the yield', () {
+    const self = 10234;
+    expect(
+      foreignPlaybackBlocksReclaim(
+        ownerUid: 10400,
+        selfUid: self,
+        started: true,
+        selfPlaying: false,
+        musicActive: true,
+        quietLongEnough: true,
+      ),
+      isTrue,
+      reason: 'still audible',
+    );
+    expect(
+      foreignPlaybackBlocksReclaim(
+        ownerUid: 10400,
+        selfUid: self,
+        started: true,
+        selfPlaying: false,
+        musicActive: false,
+        quietLongEnough: false,
+      ),
+      isTrue,
+      reason: 'silence has to hold briefly',
+    );
+    expect(
+      foreignPlaybackBlocksReclaim(
+        ownerUid: 10400,
+        selfUid: self,
+        started: true,
+        selfPlaying: false,
+        musicActive: false,
+        quietLongEnough: true,
+      ),
+      isFalse,
+      reason: 'Bilibili-class leftover after the stream is free',
+    );
+    expect(
+      playbackBlocksReclaim(
+        rows: [(ownerUid: 10400, started: true)],
+        selfUid: self,
+        selfPlaying: false,
+        musicActive: false,
+        quietLongEnough: true,
+      ),
+      isFalse,
+    );
+    expect(
+      playbackBlocksReclaim(
+        rows: const [],
+        selfUid: self,
+        selfPlaying: false,
+        musicActive: false,
+        callMode: true,
+      ),
+      isTrue,
+      reason: 'a phone call blocks even with no player row',
+    );
+    expect(
+      foreignPlaybackBlocksReclaim(
+        ownerUid: 10400,
+        selfUid: self,
+        started: false,
+        selfPlaying: false,
+        musicActive: false,
+        callMode: true,
+      ),
+      isTrue,
+    );
+  });
+
+  test('an explicit paused description beats a started reflection', () {
+    expect(
+      playbackRowStarted(reflectedStarted: true, describedState: 'paused'),
+      isFalse,
+    );
+    expect(
+      playbackRowStarted(reflectedStarted: true, describedState: 'stopped'),
+      isFalse,
+    );
+    expect(
+      playbackRowStarted(reflectedStarted: true, describedState: 'idle'),
+      isFalse,
+    );
+    expect(
+      playbackRowStarted(reflectedStarted: true, describedState: 'released'),
+      isFalse,
+    );
+    expect(
+      playbackRowStarted(reflectedStarted: false, describedState: 'started'),
+      isTrue,
+    );
+    expect(
+      playbackRowStarted(reflectedStarted: true, describedState: null),
+      isTrue,
+    );
+    expect(
+      playbackRowStarted(reflectedStarted: false, describedState: null),
+      isFalse,
+    );
+    expect(
+      playbackRowStarted(reflectedStarted: null, describedState: 'unknown'),
+      isFalse,
     );
   });
 }
