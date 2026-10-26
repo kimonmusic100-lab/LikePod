@@ -889,6 +889,7 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
         id: 'artist_${entry.key}',
         title: entry.key,
         subtitle: '${entry.value.length} songs',
+        subMenuTwoLineRows: true,
         subMenuItems: () => entry.value.map((song) {
           return PodMenuItem(
             id: 'artist_song_${song.id}',
@@ -916,6 +917,7 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
         subtitle: entry.value.first.artist,
         previewType: PreviewType.artwork,
         previewAlbumId: entry.value.first.albumId,
+        subMenuTwoLineRows: true,
         subMenuItems: () => entry.value.map((song) {
           return PodMenuItem(
             id: 'album_song_${song.id}',

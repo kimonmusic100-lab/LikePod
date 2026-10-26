@@ -144,6 +144,7 @@ class PodTheme {
       lcdHeaderEnd: const Color(0xFFCBCBD0),
       lcdHeaderText: const Color(0xFF111111),
       lcdHeaderBorder: const Color(0xFF9898A0),
+      // List body is 90% black. Subtitles stay the existing gray.
       lcdText: const Color(0xFF1A1A1A),
       lcdSubtext: const Color(0xFF7A7A7A),
       lcdHighlightStart: const Color(0xFF1A86D0),

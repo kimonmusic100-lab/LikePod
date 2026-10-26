@@ -29,11 +29,15 @@ class _LcdScreenState extends State<LcdScreen> {
   String? _trackedScreenId;
   int? _anchoredIndex;
 
-  /// Single-line Classic menus (home and nested). Title was 12.5sp inside
-  /// a 32px highlight; both grow by the same ratio so the bar stays tight.
+  /// Single-line menus at depth 1–2 (home, Music, Settings, and the
+  /// artist / album directories). Deeper track lists do not use these.
   static const double _menuTitleSize = 13.5;
   static const double _menuRowHeight = 32 * _menuTitleSize / 12.5;
-  static const double _songRowHeight = 58;
+
+  /// Two-line track lists at depth 3+ (Songs, and an artist or album's tracks).
+  static const double _songTitleSize = 15;
+  static const double _songSubtitleSize = 12;
+  static const double _songRowHeight = 52.5;
   static const double _meterSideSlot = 42;
   static const double _meterLabelGap = 4;
 
@@ -462,7 +466,7 @@ class _LcdScreenState extends State<LcdScreen> {
             color: isSelected
                 ? ClassicGlass.selectedText
                 : widget.theme.lcdText,
-            fontSize: 16.5,
+            fontSize: _songTitleSize,
             fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
             height: 1.12,
           ),
@@ -476,7 +480,7 @@ class _LcdScreenState extends State<LcdScreen> {
               color: isSelected
                   ? ClassicGlass.selectedText.withValues(alpha: 0.92)
                   : widget.theme.lcdSubtext,
-              fontSize: 13,
+              fontSize: _songSubtitleSize,
               fontWeight: FontWeight.w500,
               height: 1.12,
             ),
