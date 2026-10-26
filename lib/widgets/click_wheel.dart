@@ -8,6 +8,7 @@ class ClickWheel extends StatefulWidget {
   final PodTheme theme;
   final ValueChanged<int> onRotate;
   final VoidCallback onSelect;
+  final VoidCallback? onCenterLongPress;
   final VoidCallback onMenu;
   final VoidCallback onPlayPause;
   final VoidCallback onPrevious;
@@ -18,6 +19,7 @@ class ClickWheel extends StatefulWidget {
     required this.theme,
     required this.onRotate,
     required this.onSelect,
+    this.onCenterLongPress,
     required this.onMenu,
     required this.onPlayPause,
     required this.onPrevious,
@@ -217,51 +219,59 @@ class _ClickWheelState extends State<ClickWheel> {
                     ),
                   ),
 
-                  GestureDetector(
-                    onTapDown: (_) => setState(() => _isCenterPressed = true),
-                    onTapUp: (_) {
-                      setState(() => _isCenterPressed = false);
-                      widget.onSelect();
-                    },
-                    onTapCancel: () => setState(() => _isCenterPressed = false),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 80),
-                      width: diameter * _centerFraction,
-                      height: diameter * _centerFraction,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: _isCenterPressed
-                            ? widget.theme.centerButton.withValues(alpha: 0.85)
-                            : widget.theme.centerButton,
-                        border: Border.all(
-                          color: widget.theme.wheelRim.withValues(alpha: 0.6),
-                          width: 1.0,
-                        ),
-                        boxShadow: _isCenterPressed
-                            ? [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.2),
-                                  blurRadius: 2,
-                                  offset: const Offset(0, 1),
-                                ),
-                              ]
-                            : [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.08),
-                                  blurRadius: 4,
-                                  offset: const Offset(0, 2),
-                                ),
-                                BoxShadow(
-                                  color: Colors.white.withValues(alpha: 0.5),
-                                  blurRadius: 2,
-                                  offset: const Offset(0, -1),
-                                ),
-                              ],
-                        gradient: RadialGradient(
-                          colors: [
-                            widget.theme.centerButton,
-                            widget.theme.centerButton.withValues(alpha: 0.9),
-                          ],
+                  Listener(
+                    onPointerDown: (_) =>
+                        setState(() => _isCenterPressed = true),
+                    onPointerUp: (_) =>
+                        setState(() => _isCenterPressed = false),
+                    onPointerCancel: (_) =>
+                        setState(() => _isCenterPressed = false),
+                    child: GestureDetector(
+                      key: const Key('click_wheel_center'),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: widget.onSelect,
+                      onLongPress: widget.onCenterLongPress,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 80),
+                        width: diameter * _centerFraction,
+                        height: diameter * _centerFraction,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: _isCenterPressed
+                              ? widget.theme.centerButton.withValues(
+                                  alpha: 0.85,
+                                )
+                              : widget.theme.centerButton,
+                          border: Border.all(
+                            color: widget.theme.wheelRim.withValues(alpha: 0.6),
+                            width: 1.0,
+                          ),
+                          boxShadow: _isCenterPressed
+                              ? [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.2),
+                                    blurRadius: 2,
+                                    offset: const Offset(0, 1),
+                                  ),
+                                ]
+                              : [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.08),
+                                    blurRadius: 4,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                  BoxShadow(
+                                    color: Colors.white.withValues(alpha: 0.5),
+                                    blurRadius: 2,
+                                    offset: const Offset(0, -1),
+                                  ),
+                                ],
+                          gradient: RadialGradient(
+                            colors: [
+                              widget.theme.centerButton,
+                              widget.theme.centerButton.withValues(alpha: 0.9),
+                            ],
+                          ),
                         ),
                       ),
                     ),

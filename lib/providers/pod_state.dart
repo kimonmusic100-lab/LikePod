@@ -724,9 +724,7 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _removeMusicFolder(String folder) {
-    _musicFolders = List.unmodifiable(
-      _musicFolders.where((f) => f != folder),
-    );
+    _musicFolders = List.unmodifiable(_musicFolders.where((f) => f != folder));
     _musicService.setMusicFolders(_musicFolders);
     _schedulePersist(immediate: true);
     unawaited(_rescanLibrary());
@@ -1249,6 +1247,19 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
   @visibleForTesting
   void openNowPlayingForTest() => _openNowPlaying();
 
+  /// Pins the library and playlists so a widget test can open them.
+  @visibleForTesting
+  void seedPlaylistLibraryForTest({
+    required List<SongModel> songs,
+    required List<UserPlaylist> playlists,
+  }) {
+    _holdPersist = true;
+    // ignore: invalid_use_of_visible_for_testing_member
+    _musicService.debugSetLibrary(songs);
+    _playlists = List<UserPlaylist>.from(playlists);
+    _rebuildMenus();
+  }
+
   void _openNowPlaying() {
     _volumeBarTimer?.cancel();
     _subModeTimer?.cancel();
@@ -1333,8 +1344,7 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
           id: 'playlist:${list.id}',
           title: list.name,
           subtitle: '${list.songIds.length} 首',
-          subMenuTwoLineRows: true,
-          subMenuItems: () => _playlistDetailItems(list.id),
+          onSelect: () => _openPlaylistSongs(list.id),
         ),
       PodMenuItem(
         id: 'rescan',
@@ -1349,11 +1359,96 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
     ];
   }
 
-  List<PodMenuItem> _playlistDetailItems(String id) {
+  void _openPlaylistSongs(String id) {
+    final list = PlaylistLibrary.find(_playlists, id);
+    if (list == null) return;
+    _pushScreen(_playlistSongScreen(list));
+  }
+
+  /// Long-press on the center button. Opens the five playlist actions when
+  /// a playlist row is highlighted, or while that playlist's songs are open.
+  void onCenterLongPress() {
+    final id = _playlistIdForActions();
+    if (id == null) return;
+    final list = PlaylistLibrary.find(_playlists, id);
+    if (list == null) return;
+    if (currentScreen.id == 'playlist_actions:$id') return;
+    _soundService.playSelect(
+      soundEnabled: _soundEnabled,
+      hapticsEnabled: _hapticsEnabled,
+    );
+    _pushScreen(
+      PodMenuScreen(
+        id: 'playlist_actions:$id',
+        title: list.name,
+        isSplitView: false,
+        useTwoLineRows: true,
+        items: _playlistActionItems(id),
+      ),
+    );
+  }
+
+  String? _playlistIdForActions() {
+    final screen = currentScreen;
+    if (screen.id.startsWith('playlist:')) {
+      return screen.id.substring('playlist:'.length);
+    }
+    if (screen.id != 'playlists' || screen.items.isEmpty) return null;
+    final index = currentSelectedIndex.clamp(0, screen.items.length - 1);
+    final itemId = screen.items[index].id;
+    if (!itemId.startsWith('playlist:')) return null;
+    return itemId.substring('playlist:'.length);
+  }
+
+  PodMenuScreen _playlistSongScreen(UserPlaylist list) {
+    return PodMenuScreen(
+      id: 'playlist:${list.id}',
+      title: list.name,
+      isSplitView: false,
+      useTwoLineRows: true,
+      items: _playlistSongItems(list.id),
+    );
+  }
+
+  List<PodMenuItem> _playlistSongItems(String id) {
     final list = PlaylistLibrary.find(_playlists, id);
     if (list == null) {
       return [
+        const PodMenuItem(
+          id: 'playlist_missing',
+          title: '播放列表已删除',
+          hasSubmenu: false,
+        ),
+      ];
+    }
+    final songs = _songsFor(list);
+    if (songs.isEmpty) {
+      return const [
         PodMenuItem(
+          id: 'playlist_empty',
+          title: '列表是空的',
+          subtitle: '长按中键管理',
+          hasSubmenu: false,
+        ),
+      ];
+    }
+    return [
+      for (final song in songs)
+        PodMenuItem(
+          id: 'playlist_song:${id}_${song.id}',
+          title: song.title,
+          subtitle: song.artist,
+          hasSubmenu: false,
+          onSelect: () => _playSong(song, queue: songs),
+        ),
+    ];
+  }
+
+  List<PodMenuItem> _playlistActionItems(String id) {
+    final list = PlaylistLibrary.find(_playlists, id);
+    if (list == null) {
+      return [
+        const PodMenuItem(
           id: 'playlist_missing',
           title: '播放列表已删除',
           hasSubmenu: false,
@@ -1398,14 +1493,6 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
         hasSubmenu: false,
         onSelect: () => _deletePlaylist(id),
       ),
-      for (final song in songs)
-        PodMenuItem(
-          id: 'playlist_song:${id}_${song.id}',
-          title: song.title,
-          subtitle: song.artist,
-          hasSubmenu: false,
-          onSelect: () => _playSong(song, queue: songs),
-        ),
     ];
   }
 
@@ -1453,7 +1540,8 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
         PodMenuItem(
           id: 'playlist_add_song:${id}_${song.id}',
           title: song.title,
-          subtitle: present.contains(song.id) ? '已添加' : song.artist,
+          subtitle: song.artist,
+          alreadyAdded: present.contains(song.id),
           hasSubmenu: false,
           onSelect: () => _togglePlaylistSong(id, song.id),
         ),
@@ -1524,15 +1612,7 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
       _popIfNameScreen();
       _schedulePersist(immediate: true);
       _refreshPlaylistScreens();
-      _pushScreen(
-        PodMenuScreen(
-          id: 'playlist:$id',
-          title: name,
-          isSplitView: false,
-          useTwoLineRows: true,
-          items: _playlistDetailItems(id),
-        ),
-      );
+      _openPlaylistSongs(id);
       return;
     }
     _playlists = PlaylistLibrary.rename(_playlists, id: renaming, name: name);
@@ -1547,7 +1627,9 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
     _schedulePersist(immediate: true);
     while (_screenStack.length > 1) {
       final screenId = _screenStack.last.id;
-      final inside = screenId == 'playlist:$id' ||
+      final inside =
+          screenId == 'playlist:$id' ||
+          screenId == 'playlist_actions:$id' ||
           screenId == 'playlist_add:$id' ||
           screenId == 'playlist_remove:$id' ||
           (screenId == 'playlist_name' && _namingPlaylistId == id);
@@ -1606,12 +1688,17 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
         final id = screen.id.substring('playlist:'.length);
         final list = PlaylistLibrary.find(_playlists, id);
         if (list == null) continue;
+        next = _playlistSongScreen(list);
+      } else if (screen.id.startsWith('playlist_actions:')) {
+        final id = screen.id.substring('playlist_actions:'.length);
+        final list = PlaylistLibrary.find(_playlists, id);
+        if (list == null) continue;
         next = PodMenuScreen(
           id: screen.id,
           title: list.name,
           isSplitView: false,
           useTwoLineRows: true,
-          items: _playlistDetailItems(id),
+          items: _playlistActionItems(id),
         );
       } else if (screen.id.startsWith('playlist_add:')) {
         final id = screen.id.substring('playlist_add:'.length);

@@ -61,8 +61,8 @@ object PlaybackFocus {
     private const val RECLAIM_POLL_MS = 500L
 
     /**
-     * Covers the 3.8s Dart gap plus the fade, then drops the yield wake if
-     * play never started. Real playback takes over the service wake lock
+     * Covers the 3.8s Dart gap plus the 1s fade, then drops the yield wake
+     * if play never started. Real playback takes over the service wake lock
      * at the start of the fade, so this only has to outlast the gap.
      */
     private const val YIELD_HOLD_AFTER_RESUME_MS = 9000L

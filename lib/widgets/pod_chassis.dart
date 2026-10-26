@@ -121,6 +121,7 @@ class PodChassis extends StatelessWidget {
                                 theme: theme,
                                 onRotate: pod.onRotate,
                                 onSelect: pod.onSelect,
+                                onCenterLongPress: pod.onCenterLongPress,
                                 onMenu: pod.onMenu,
                                 onPlayPause: pod.onPlayPause,
                                 onPrevious: pod.onPrevious,

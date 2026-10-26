@@ -94,15 +94,29 @@ void main() {
     );
   });
 
-  test('a yield resume waits 3.8 seconds, then fades back to unity', () {
+  test('a yield resume waits 3.8 seconds, then fades for 1 second', () {
     expect(yieldResumeGap, const Duration(milliseconds: 3800));
-    expect(yieldFadeDuration, const Duration(milliseconds: 800));
-    expect(yieldFadeDuration.inMilliseconds, inInclusiveRange(500, 1000));
+    expect(yieldFadeDuration, const Duration(milliseconds: 1000));
     expect(resumeDelay(fromFocusYield: false), Duration.zero);
     expect(resumeDelay(fromFocusYield: true), yieldResumeGap);
-    expect(yieldFadeGain(0, 8), 0);
-    expect(yieldFadeGain(8, 8), 1);
-    expect(yieldFadeGain(4, 8), closeTo(0.5, 0.001));
+    expect(yieldFadeGain(0, yieldFadeSteps), 0);
+    expect(yieldFadeGain(yieldFadeSteps, yieldFadeSteps), 1);
+    expect(
+      yieldFadeGain(yieldFadeSteps ~/ 2, yieldFadeSteps),
+      closeTo(0.5, 0.001),
+    );
+    var previous = Duration.zero;
+    for (var step = 1; step <= yieldFadeSteps; step++) {
+      final at = yieldFadeStepAt(step, yieldFadeSteps, yieldFadeDuration);
+      expect(at, greaterThan(previous));
+      expect(at, lessThanOrEqualTo(yieldFadeDuration));
+      previous = at;
+    }
+    expect(
+      yieldFadeStepAt(yieldFadeSteps, yieldFadeSteps, yieldFadeDuration),
+      yieldFadeDuration,
+      reason: 'the last step is applied at 1000 ms, not one slice early',
+    );
   });
 
   test('reclaim waits for another app and not for our own row', () {

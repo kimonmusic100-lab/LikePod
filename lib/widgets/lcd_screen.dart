@@ -15,6 +15,9 @@ import 'bluetooth_mark.dart';
 import 'cover_flow_pose.dart';
 import 'edge_scroll.dart';
 
+/// Light-blue wash for songs that are already in the playlist being edited.
+const Color addedSongRowColor = Color(0xFFC5E6F6);
+
 class LcdScreen extends StatefulWidget {
   final PodTheme theme;
 
@@ -374,10 +377,13 @@ class _LcdScreenState extends State<LcdScreen> {
             }
           },
           child: Container(
+            key: ValueKey(item.id),
             decoration: BoxDecoration(
               gradient: isSelected ? ClassicGlass.fill : null,
               color: isSelected
                   ? null
+                  : item.alreadyAdded
+                  ? addedSongRowColor
                   : (index.isEven
                         ? Colors.transparent
                         : widget.theme.lcdDivider.withValues(alpha: 0.15)),
@@ -482,7 +488,9 @@ class _LcdScreenState extends State<LcdScreen> {
                 ? ClassicGlass.selectedText
                 : widget.theme.lcdText,
             fontSize: _songTitleSize,
-            fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+            fontWeight: isSelected || item.alreadyAdded
+                ? FontWeight.w700
+                : FontWeight.w600,
             height: 1.12,
           ),
         ),
@@ -496,7 +504,7 @@ class _LcdScreenState extends State<LcdScreen> {
                   ? ClassicGlass.selectedText.withValues(alpha: 0.92)
                   : widget.theme.lcdSubtext,
               fontSize: _songSubtitleSize,
-              fontWeight: FontWeight.w500,
+              fontWeight: item.alreadyAdded ? FontWeight.w700 : FontWeight.w500,
               height: 1.12,
             ),
           ),

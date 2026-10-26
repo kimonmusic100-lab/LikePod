@@ -46,8 +46,21 @@ class FocusYield {
 const yieldResumeGap = Duration(milliseconds: 3800);
 
 /// Ramp the player from silence to unity after a yield resume.
-/// The system music volume is unchanged; unity matches the user's setting.
-const yieldFadeDuration = Duration(milliseconds: 800);
+/// One second on the clock. The system music volume is unchanged;
+/// unity matches the user's setting.
+const yieldFadeDuration = Duration(milliseconds: 1000);
+
+/// How many player-volume writes make up [yieldFadeDuration].
+const yieldFadeSteps = 20;
+
+/// When step [step] of [stepCount] is applied, measured from the fade start.
+/// Step [stepCount] lands on [total], so the ramp lasts the whole duration
+/// rather than finishing one slice early.
+Duration yieldFadeStepAt(int step, int stepCount, Duration total) {
+  if (stepCount <= 0 || step >= stepCount) return total;
+  if (step <= 0) return Duration.zero;
+  return Duration(microseconds: total.inMicroseconds * step ~/ stepCount);
+}
 
 /// Linear fade step. [step] is 1-based and [stepCount] is the last step.
 double yieldFadeGain(int step, int stepCount) {

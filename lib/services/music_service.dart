@@ -101,6 +101,7 @@ class MusicService {
   /// Windows/desktop: albumId -> sidecar cover file path.
   final Map<int, String> _albumArtPaths = {};
   List<SongModel> _allSongs = [];
+  bool _libraryPinned = false;
   List<SongModel> _currentQueue = [];
   int _currentQueueIndex = -1;
 
@@ -428,8 +429,16 @@ class MusicService {
       songs.addAll(_getSamplePlayableTracks());
     }
 
+    if (_libraryPinned) return _allSongs;
     _allSongs = songs;
     return songs;
+  }
+
+  /// Widget tests pin a library so a later device scan cannot replace it.
+  @visibleForTesting
+  void debugSetLibrary(List<SongModel> songs) {
+    _libraryPinned = true;
+    _allSongs = List<SongModel>.from(songs);
   }
 
   /// Shown when the device library is empty. This file is sample music,
@@ -513,8 +522,10 @@ class MusicService {
       if (play && !kIsWeb && Platform.isAndroid) {
         try {
           focusGranted =
-              await _channel.invokeMethod<bool>('holdPlayback', {'user': true}) ==
-                  true;
+              await _channel.invokeMethod<bool>('holdPlayback', {
+                'user': true,
+              }) ==
+              true;
         } catch (_) {
           focusGranted = false;
         }
@@ -610,7 +621,7 @@ class MusicService {
       try {
         granted =
             await _channel.invokeMethod<bool>('holdPlayback', {'user': true}) ==
-                true;
+            true;
       } catch (_) {}
       if (!granted) {
         _intendPlay = false;
@@ -643,9 +654,13 @@ class MusicService {
     final fade = ++_fadeEpoch;
     final player = _engine.player;
     if (player == null) return;
-    const steps = 16;
-    final slice = yieldFadeDuration ~/ steps;
-    for (var step = 1; step <= steps; step++) {
+    final started = DateTime.now();
+    for (var step = 1; step <= yieldFadeSteps; step++) {
+      final at = yieldFadeStepAt(step, yieldFadeSteps, yieldFadeDuration);
+      final wait = started.add(at).difference(DateTime.now());
+      if (wait > Duration.zero) {
+        await Future<void>.delayed(wait);
+      }
       if (fade != _fadeEpoch || !_intendPlay) {
         try {
           await player.setVolume(1);
@@ -653,13 +668,7 @@ class MusicService {
         return;
       }
       try {
-        await player.setVolume(yieldFadeGain(step, steps));
-      } catch (_) {}
-      await Future<void>.delayed(slice);
-    }
-    if (fade == _fadeEpoch) {
-      try {
-        await player.setVolume(1);
+        await player.setVolume(yieldFadeGain(step, yieldFadeSteps));
       } catch (_) {}
     }
   }
