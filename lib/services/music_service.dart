@@ -160,15 +160,23 @@ class MusicService {
   }
 
   /// Now Playing asks again so a silent capture can show the permission.
+  ///
+  /// Pausing on that screen keeps the ask armed. Stopping the visualizer
+  /// here would drop it.
   Future<void> refreshSpectrum({bool promptIfSilent = false}) {
     final player = _engine.player;
-    if (player == null) return Future<void>.value();
+    if (player == null || (promptIfSilent && !player.playing)) {
+      if (promptIfSilent) SpectrumFeed.instance.armFlatPrompt();
+      return Future<void>.value();
+    }
     return SpectrumFeed.instance.follow(
       player.playing ? player.androidAudioSessionId : null,
       playing: player.playing,
       promptIfSilent: promptIfSilent,
     );
   }
+
+  void disarmSpectrumPrompt() => SpectrumFeed.instance.disarmFlatPrompt();
 
   /// Holds audio focus and the playback foreground service while [playing],
   /// including after the activity has left the screen.

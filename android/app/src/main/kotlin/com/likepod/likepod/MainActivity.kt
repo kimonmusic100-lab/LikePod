@@ -58,6 +58,9 @@ class MainActivity : AudioServiceActivity() {
     private var trackSpectrum: TrackSpectrum? = null
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
+        // Before any AudioTrack. A policy applied after the track exists
+        // does not change that track, and the visualizer then reads zeros.
+        TrackSpectrum.allowPlaybackCapture(this)
         super.configureFlutterEngine(flutterEngine)
         val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         mediaChannel = channel

@@ -26,6 +26,17 @@ double nowPlayingWaveBottom({
   return minGapAboveProgress;
 }
 
+/// How many of [rows] dots to paint for one column.
+///
+/// A level the feed already calls live (>= 0.05) paints at least one dot.
+/// Below that the column stays blank.
+int litDotCount(double level, {int rows = 8}) {
+  if (level <= 0 || rows <= 0) return 0;
+  final scaled = (level * rows).round();
+  if (level >= 0.05) return math.max(1, scaled).clamp(0, rows);
+  return scaled.clamp(0, rows);
+}
+
 /// Center of the first dot column.
 ///
 /// Columns sit [pitch] apart. The ink runs from the left edge of the first
@@ -120,7 +131,7 @@ class _DotColumnPainter extends CustomPainter {
     for (var c = 0; c < cols; c++) {
       final t = cols == 1 ? 0.5 : c / (cols - 1);
       final level = _bandAt(t);
-      final litCount = (level * rows).round().clamp(0, rows);
+      final litCount = litDotCount(level, rows: rows);
       for (var r = 0; r < litCount; r++) {
         final peak = r == litCount - 1;
         canvas.drawCircle(

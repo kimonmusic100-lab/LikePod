@@ -17,6 +17,24 @@ bool spectrumLooksLive(List<double> levels) {
   return peak >= 0.05;
 }
 
+/// True when [SpectrumFeed.follow] should leave the current attach alone.
+///
+/// Playback events re-deliver the same session. A pending flat-check stays
+/// put unless Now Playing has just asked to prompt. A finished check is not
+/// started again for that visit.
+bool spectrumWatchSettled({
+  required bool sameSession,
+  required bool watchPending,
+  required bool watchPrompts,
+  required bool prompt,
+  required bool promptedThisVisit,
+}) {
+  if (!sameSession) return false;
+  if (watchPending && (watchPrompts == prompt || !prompt)) return true;
+  if (!watchPending && (!prompt || promptedThisVisit)) return true;
+  return false;
+}
+
 /// Live band levels from the track that is actually playing.
 ///
 /// The player's own audio session is attached first, with no permission
@@ -40,6 +58,28 @@ class SpectrumFeed {
   int _generation = 0;
   bool _askedPermission = false;
   bool _triedMix = false;
+  bool _promptWhileFlat = false;
+  bool _watchPrompts = false;
+  bool _promptedThisVisit = false;
+
+  /// Now Playing is open, including while paused on that screen.
+  bool get debugPromptArmed => _promptWhileFlat;
+
+  /// Arms the one-shot flat check. A later [follow] with playback running
+  /// uses it; calling this does not stop a visualizer.
+  void armFlatPrompt() => _armPrompt();
+
+  /// Leaves Now Playing. A check that has not asked yet will not ask.
+  void disarmFlatPrompt() {
+    _promptWhileFlat = false;
+  }
+
+  void _armPrompt() {
+    if (_promptWhileFlat) return;
+    _promptWhileFlat = true;
+    _triedMix = false;
+    _promptedThisVisit = false;
+  }
 
   bool get _foreground {
     final state = WidgetsBinding.instance.lifecycleState;
@@ -71,9 +111,11 @@ class SpectrumFeed {
     bool promptIfSilent = false,
   }) async {
     if (kIsWeb || !Platform.isAndroid) return;
+    if (promptIfSilent) _armPrompt();
     if (!playing) {
       _generation++;
       _watch?.cancel();
+      _watch = null;
       await stop();
       return;
     }
@@ -83,22 +125,34 @@ class SpectrumFeed {
       await _log('wave waiting for session');
       return;
     }
-    if (_session == id && !promptIfSilent) return;
+    final prompt = _promptWhileFlat && _foreground;
+    if (spectrumWatchSettled(
+      sameSession: _session == id,
+      watchPending: _watch != null,
+      watchPrompts: _watchPrompts,
+      prompt: prompt,
+      promptedThisVisit: _promptedThisVisit,
+    )) {
+      return;
+    }
     if (_session != id) {
       final status = await _start(id);
       if (status != 'ok') {
-        await _escalate(id, prompt: promptIfSilent && _foreground);
+        await _escalate(id, prompt: prompt);
         return;
       }
     }
-    _scheduleCheck(id, prompt: promptIfSilent && _foreground);
+    _scheduleCheck(id, prompt: prompt);
   }
 
   void _scheduleCheck(int sessionId, {required bool prompt}) {
     final generation = ++_generation;
+    _watchPrompts = prompt;
+    if (prompt) _promptedThisVisit = true;
     _watch?.cancel();
     _watch = Timer(const Duration(milliseconds: 450), () async {
       if (generation != _generation) return;
+      _watch = null;
       if (spectrumLooksLive(levels.value)) {
         await _log('wave live sessionId=$sessionId');
         return;
@@ -111,7 +165,10 @@ class SpectrumFeed {
         return;
       }
       await _log('wave silent sessionId=$sessionId');
-      await _escalate(sessionId, prompt: prompt);
+      await _escalate(
+        sessionId,
+        prompt: _promptWhileFlat && _foreground,
+      );
     });
   }
 

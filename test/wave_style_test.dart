@@ -55,6 +55,99 @@ void main() {
     }
   });
 
+  test('a live level paints at least one dot', () {
+    expect(litDotCount(0), 0);
+    expect(litDotCount(0.02), 0);
+    expect(litDotCount(0.05), 1);
+    expect(litDotCount(0.2), 2);
+    expect(litDotCount(1), 8);
+  });
+
+  test('a playback event does not restart a flat-check', () {
+    expect(
+      spectrumWatchSettled(
+        sameSession: true,
+        watchPending: true,
+        watchPrompts: false,
+        prompt: false,
+        promptedThisVisit: false,
+      ),
+      isTrue,
+    );
+    expect(
+      spectrumWatchSettled(
+        sameSession: true,
+        watchPending: true,
+        watchPrompts: false,
+        prompt: true,
+        promptedThisVisit: false,
+      ),
+      isFalse,
+    );
+    expect(
+      spectrumWatchSettled(
+        sameSession: true,
+        watchPending: true,
+        watchPrompts: true,
+        prompt: false,
+        promptedThisVisit: true,
+      ),
+      isTrue,
+    );
+    expect(
+      spectrumWatchSettled(
+        sameSession: true,
+        watchPending: false,
+        watchPrompts: false,
+        prompt: false,
+        promptedThisVisit: false,
+      ),
+      isTrue,
+    );
+    expect(
+      spectrumWatchSettled(
+        sameSession: true,
+        watchPending: false,
+        watchPrompts: false,
+        prompt: true,
+        promptedThisVisit: false,
+      ),
+      isFalse,
+    );
+    expect(
+      spectrumWatchSettled(
+        sameSession: true,
+        watchPending: false,
+        watchPrompts: true,
+        prompt: true,
+        promptedThisVisit: true,
+      ),
+      isTrue,
+    );
+    expect(
+      spectrumWatchSettled(
+        sameSession: false,
+        watchPending: true,
+        watchPrompts: true,
+        prompt: true,
+        promptedThisVisit: true,
+      ),
+      isFalse,
+    );
+  });
+
+  test('Now Playing keeps the flat prompt armed until menu leaves', () {
+    final feed = SpectrumFeed.instance;
+    feed.disarmFlatPrompt();
+    expect(feed.debugPromptArmed, isFalse);
+    feed.armFlatPrompt();
+    expect(feed.debugPromptArmed, isTrue);
+    feed.armFlatPrompt();
+    expect(feed.debugPromptArmed, isTrue);
+    feed.disarmFlatPrompt();
+    expect(feed.debugPromptArmed, isFalse);
+  });
+
   test('the waveform sits under the cover and clear of the progress bar', () {
     final roomy = nowPlayingWaveBottom(areaHeight: 360, coverHeight: 140);
     expect(roomy, greaterThanOrEqualTo(22));

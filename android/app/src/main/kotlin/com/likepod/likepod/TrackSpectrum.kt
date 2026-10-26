@@ -99,7 +99,7 @@ class TrackSpectrum(
             return "ok"
         }
         stop()
-        allowAppCapture()
+        allowPlaybackCapture(context)
         return try {
             val effect = Visualizer(sessionId)
             val range = Visualizer.getCaptureSizeRange()
@@ -220,20 +220,27 @@ class TrackSpectrum(
         }
     }
 
-    private fun allowAppCapture() {
-        if (Build.VERSION.SDK_INT < 29) return
-        try {
-            val manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            manager.allowedCapturePolicy = AudioAttributes.ALLOW_CAPTURE_BY_ALL
-        } catch (_: Exception) {
-        }
-    }
-
     companion object {
         private const val TAG = "LikePod"
         private const val CHANNEL = "com.likepod/spectrum"
         private const val EVENT = "com.likepod/spectrum_events"
         const val BANDS = 24
+        private var capturePolicyLogged = false
+
+        /// New tracks inherit this. An existing track keeps the policy it
+        /// was created with, so call this before playback starts.
+        fun allowPlaybackCapture(context: Context) {
+            if (Build.VERSION.SDK_INT < 29) return
+            try {
+                val manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                manager.allowedCapturePolicy = AudioAttributes.ALLOW_CAPTURE_BY_ALL
+                if (!capturePolicyLogged) {
+                    capturePolicyLogged = true
+                    Log.i(TAG, "wave capture policy allow-all")
+                }
+            } catch (_: Exception) {
+            }
+        }
 
         fun sessionArgument(arguments: Any?): Int {
             val raw = (arguments as? Map<*, *>)?.get("sessionId")

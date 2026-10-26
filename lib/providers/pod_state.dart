@@ -353,6 +353,11 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
         final wasActive = _hasActivePlayback;
         final wasPlaying = _isPlaying;
         _isPlaying = state.playing;
+        if (!wasPlaying &&
+            state.playing &&
+            currentScreen.id == 'now_playing_view') {
+          _pokeSpectrum();
+        }
         final song = _musicService.currentSong;
         if (song != null) {
           _hasActivePlayback = true;
@@ -1195,10 +1200,15 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
       hapticsEnabled: _hapticsEnabled,
     );
 
+    final leavingNowPlaying = _screenStack.length > 1 &&
+        _screenStack.last.id == 'now_playing_view';
     if (_screenStack.length > 1) {
       _screenStack.removeLast();
       _indexStack.removeLast();
       notifyListeners();
+    }
+    if (leavingNowPlaying) {
+      _musicService.disarmSpectrumPrompt();
     }
   }
 
@@ -1295,7 +1305,6 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _pokeSpectrum() {
-    if (!_isPlaying) return;
     unawaited(_musicService.refreshSpectrum(promptIfSilent: true));
   }
 
