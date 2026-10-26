@@ -9,7 +9,6 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../models/song_model.dart';
 import 'audio_engine.dart';
-import 'focus_route.dart';
 import 'output_probe.dart';
 
 enum PodShuffleMode { off, songs }
@@ -20,12 +19,7 @@ class MusicService {
   static final MusicService _instance = MusicService._internal();
   factory MusicService() => _instance;
   MusicService._internal() {
-    _engine.onAppliedGain = (ui) {
-      _volume = ui;
-    };
-    _engine.onFocusGained = _onFocusGained;
     _engine.onFocusLost = _onNativeFocusLost;
-    _engine.onDirectDied = _onDirectDied;
   }
 
   static const MethodChannel _channel = MethodChannel('com.likepod/media');
@@ -33,26 +27,10 @@ class MusicService {
   bool _askedNotificationPermission = false;
   bool _anchorHooked = false;
   bool _intendPlay = false;
-  bool _inBackground = false;
-  int _directKeeps = 0;
-  DateTime? _nextDirectKeep;
 
-  /// The native yield paused ExoPlayer directly (fast DAC handoff), which
-  /// bypasses just_audio. Mirror the pause through just_audio so its Dart
-  /// state matches: otherwise play() later is swallowed as a no-op while
-  /// "playing", and the auto-resumed player stays silent while the UI and
-  /// the notification report playing.
+  /// Another app took audio focus. Pause and stay paused until play is pressed.
   void _onNativeFocusLost() {
-    _engine.player?.pause();
-  }
-
-  /// Fired when the direct stream dies while the player still wants to
-  /// play (freeze stall). Three quick sync attempts re-open it without
-  /// waiting for the next route event.
-  void _onDirectDied() {
-    if (_intendPlay) {
-      _engine.retryDirectAfterDeath();
-    }
+    unawaited(pause());
   }
 
   final Map<int, Uint8List?> _artworkCache = {};
@@ -96,67 +74,9 @@ class MusicService {
       _anchorHooked = true;
       player.playingStream.listen((playing) {
         unawaited(anchorPlayback(playing));
-        if (!playing && _intendPlay && _inBackground) {
-          unawaited(_keepDirectIfFocused());
-        }
       });
     }
     return ok;
-  }
-
-  /// The activity has left the screen. Direct USB stays claimed while this
-  /// process still holds focus.
-  void setInBackground(bool background) {
-    _inBackground = background;
-    if (!background) _directKeeps = 0;
-  }
-
-  /// A pause while we still hold focus is not another app. Start the direct
-  /// stream again. A real focus loss leaves [focusHeld] false, so this does
-  /// not steal the DAC back.
-  Future<void> _keepDirectIfFocused() async {
-    final player = _engine.player;
-    if (player == null || !_intendPlay || !_inBackground || player.playing) {
-      return;
-    }
-    final now = DateTime.now();
-    if (_directKeeps >= 3) return;
-    if (_nextDirectKeep != null && now.isBefore(_nextDirectKeep!)) return;
-    var held = false;
-    try {
-      held = await _channel.invokeMethod<bool>('focusHeld') ?? false;
-    } catch (_) {}
-    if (!claimDirectUsb(focusHeld: held, userWantsPlayback: _intendPlay)) {
-      return;
-    }
-    if (!_inBackground || player.playing) return;
-    _directKeeps++;
-    _nextDirectKeep = now.add(const Duration(milliseconds: 400));
-    await _engine.syncRoute();
-    if (!_intendPlay || !_inBackground || player.playing) return;
-    await player.play();
-  }
-
-  Future<void> _onFocusGained(bool shouldResume) async {
-    _directKeeps = 0;
-    if (!shouldResume || !_intendPlay) {
-      // Focus returned without an armed auto-resume. The DAC stays free
-      // until the user presses play.
-      return;
-    }
-    // Native debounced the regain and confirmed this process still holds
-    // focus. Run the full user-resume path so the DAC is claimed again,
-    // not just the mixer fallback.
-    await resume();
-    // A play() right after the native pause can leave the renderer wedged:
-    // ExoPlayer reports playing and advances the clock, but the AudioTrack
-    // is never fed. A seek to the current position forces the sink to
-    // flush and rebuild, mirroring the USB-path trick this app already
-    // uses when a direct stream reopens mid-playback.
-    final player = _engine.player;
-    if (player != null && player.playing) {
-      await player.seek(player.position);
-    }
   }
 
   /// Holds audio focus and the playback foreground service while [playing],
@@ -183,22 +103,6 @@ class MusicService {
   }
 
   List<SongModel> get allSongs => _allSongs;
-
-  /// High quality claims the USB DAC exclusively; standard stays on the
-  /// system mixer even when a DAC is attached.
-  bool _highQuality = true;
-
-  bool get highQuality => _highQuality;
-
-  Future<void> setQualityMode(bool high) async {
-    if (_highQuality == high) return;
-    _highQuality = high;
-    _engine.highQualityOutput = high;
-    // Re-apply the route now: standard mode must drop an active exclusive
-    // claim; high quality may open one mid-playback.
-    await _engine.syncRoute(force: true);
-    _engine.recheckUsbRoute();
-  }
 
   void setMusicFolders(List<String> folders) {
     _musicFolders = List.unmodifiable(folders);
@@ -550,16 +454,10 @@ class MusicService {
           focusGranted = false;
         }
         if (!focusGranted) {
-          // Focus is held by a call or another app. Do not start playback
-          // and do not claim the DAC.
+          // Focus is held by a call or another app. Do not start playback.
           _intendPlay = false;
         }
       }
-
-      // Open a direct USB stream before ExoPlayer builds an AudioTrack, so a
-      // 44.1 kHz file is not first handed to the system mixer. The claim
-      // runs only while playback is actually starting.
-      await _engine.noteTrack(song.uri);
 
       if (song.uri.startsWith('asset:///')) {
         final assetPath = song.uri.replaceFirst('asset:///', '');
@@ -580,7 +478,6 @@ class MusicService {
       }
       if (play && focusGranted) {
         await _ensureNotificationPermission();
-        // Same as resume(): never block the route sync on play().
         unawaited(
           player.play().then(
             (_) {},
@@ -589,12 +486,8 @@ class MusicService {
             },
           ),
         );
-        // playWhenReady is now true, so a fresh direct open can move the sink.
-        await _engine.syncRoute(force: true);
-        _engine.recheckUsbRoute();
-      } else {
-        await _engine.syncRoute();
       }
+      await _engine.syncRoute();
       return true;
     } catch (e) {
       debugPrint('Error playing song ${song.title}: $e');
@@ -610,8 +503,8 @@ class MusicService {
     } catch (e) {
       debugPrint('Notification permission request failed: $e');
     }
-    // The battery whitelist matters more: HyperOS freezes the process
-    // ~20s after audio pauses, which kills the background auto-resume.
+    // HyperOS freezes the process ~20s after audio pauses. The whitelist
+    // keeps notification controls usable after that pause.
     try {
       await _channel.invokeMethod<void>('requestIgnoreBatteryOptimizations');
     } catch (_) {}
@@ -649,10 +542,6 @@ class MusicService {
         return;
       }
     }
-    // Do not await play(): on the first play after a restore its future can
-    // hang, which used to skip the route sync below and leave the USB DAC
-    // on the system mixer. playWhenReady is set synchronously, so the
-    // direct claim and sink flush still see a playing player.
     unawaited(
       _engine.player!.play().then(
         (_) {},
@@ -661,10 +550,7 @@ class MusicService {
         },
       ),
     );
-    if (!kIsWeb && Platform.isAndroid) {
-      await _engine.syncRoute(force: true);
-      _engine.recheckUsbRoute();
-    }
+    await _engine.syncRoute();
   }
 
   Future<void> togglePlayPause() async {
@@ -848,19 +734,17 @@ class MusicService {
 
   Future<void> setVolume(double vol, {bool writeSystem = true}) async {
     _volume = vol.clamp(0.0, 1.0);
-    final direct = _engine.snapshot.directActive;
     try {
-      // Mixer loudness is the system stream alone. Direct loudness is the
-      // USB curve, so the player volume is not a second attenuator there.
-      await _engine.player?.setVolume(direct ? _volume : 1.0);
+      // Loudness is the system music stream. Player volume stays at unity
+      // so it is not a second attenuator.
+      await _engine.player?.setVolume(1.0);
     } catch (_) {}
     if (!kIsWeb && Platform.isAndroid) {
       try {
-        final applied = await _channel.invokeMethod<dynamic>('setVolume', {
+        await _channel.invokeMethod<dynamic>('setVolume', {
           'volume': _volume,
-          'writeSystem': writeSystem && !direct,
+          'writeSystem': writeSystem,
         });
-        _engine.noteDirectReport(applied);
       } catch (_) {}
     }
   }

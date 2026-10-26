@@ -15,9 +15,8 @@ import androidx.core.app.NotificationCompat
 /**
  * Foreground service that outlives the activity.
  *
- * [mediaPlayback] is what Android uses to keep a mixer stream audible.
- * [connectedDevice] is added only while this process owns the USB interface,
- * so isochronous transfers are still allowed after Home.
+ * [mediaPlayback] is what Android uses to keep a mixer stream audible
+ * after Home. The service does not claim a USB device.
  */
 class PlaybackService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
@@ -34,12 +33,8 @@ class PlaybackService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        val usb = intent?.getBooleanExtra(EXTRA_USB, false) == true
-        promote(usb)
+        promote()
         acquireWake()
-        if (usb) {
-            UsbExclusive.keepForService("playback-service")
-        }
         return START_NOT_STICKY
     }
 
@@ -48,25 +43,15 @@ class PlaybackService : Service() {
         super.onDestroy()
     }
 
-    private fun promote(usb: Boolean) {
+    private fun promote() {
         val notification = buildNotification()
         if (Build.VERSION.SDK_INT >= 29) {
-            val media = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-            val connected = if (Build.VERSION.SDK_INT >= 29) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-            } else {
-                0
-            }
-            if (usb) {
-                try {
-                    startForeground(NOTIFICATION_ID, notification, media or connected)
-                    return
-                } catch (error: Throwable) {
-                    Log.i(TAG, "Connected-device foreground skipped: ${error.message}")
-                }
-            }
             try {
-                startForeground(NOTIFICATION_ID, notification, media)
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
+                )
                 return
             } catch (error: Throwable) {
                 Log.i(TAG, "Typed foreground skipped: ${error.message}")
@@ -129,7 +114,6 @@ class PlaybackService : Service() {
 
     companion object {
         private const val TAG = "LikePod"
-        const val EXTRA_USB = "usb"
         const val EXTRA_STOP = "stop"
         private const val CHANNEL_ID = "com.likepod.likepod.channel.keepalive"
         private const val NOTIFICATION_ID = 1125

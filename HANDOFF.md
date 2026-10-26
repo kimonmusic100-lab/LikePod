@@ -1,3 +1,7 @@
+# LikePod 首视频无声问题 — 历史记录
+
+> **0.1.0+32 已删除 USB 独占。** 日常播放只走 Android 系统混音（just_audio）。下面的 usbfs / 让渡 / 复位记录只解释为什么独占被拿掉，不再描述当前代码。若以后要研究独占，应另开分支重新引入，而不是在此树里留开关。
+
 # LikePod 首视频无声问题 — 完整交接文档
 
 > 写给下一位接手的 AI 或工程师。所有结论都有日志与 dump 佐证,存档位置见文末。
@@ -36,7 +40,7 @@ LikePod 独占 USB DAC:usbfs 断开内核驱动(USBDEVFS_DISCONNECT),自建等�
 
 ## 明日可尝试的剩余方向
 
-1. **默认标准模式**:highQuality 默认 false(不独占),高品质作为开关。彻底绕开问题——代价是插 DAC 默认无直连音质。改动点:`AppSettings.highQuality` 默认值 + `UsbExclusive.tryStart` 的让渡策略
+1. **改走系统混音**:不再独占 DAC。这是 0.1.0+32 采用的做法。
 2. **让渡不归还驱动**:保持 usbfs 接口断开(不做 USBDEVFS_CONNECT、不复位),对方音频走扬声器而非 DAC;LikePod 恢复时秒回直连。产品语义变化:DAC 只服务 LikePod
 3. **上报内核/平台**:所有证据(dumpsys media.audio_flinger 的 Threadloop write latency 异常、xhci 中断零增长、GETDRIVER bound=2、端口复位无效)齐备,可向 MTK 或 ALSA/snd-usb-audio 社区提交
 4. **HAL 重挂载强制**:复位后反射调用 UsbAlsaManager 的重挂载逻辑(需系统权限,大概率被拒,未验证)
@@ -52,7 +56,7 @@ LikePod 独占 USB DAC:usbfs 断开内核驱动(USBDEVFS_DISCONNECT),自建等�
 
 ## 诊断工具链(复用价值高)
 
-- `usb_hook` 注入的 UsbDirectSink/UsbPreferredDevice 带 LikePodSink 标签状态日志
+- 旧的 just_audio 注入钩子带 LikePodSink 标签状态日志（该钩子已随独占实现删除）
 - `AudioFlinger dump` 判据:音轨 server 帧推进 = app→AF 正常;HAL Timestamp cold 率 = AF→内核断点;Threadloop write latency(正常 <10ms,卡死时秒级~百秒级)= 内核端点卡死
 - xhci 中断计数(`/proc/interrupts` 的 xhci-hcd:usb1)= 端到端流量的最终裁判
 - USBDEVFS_GETDRIVER(nativeGetDriver)= 接口驱动归属查询

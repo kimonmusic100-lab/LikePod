@@ -1,26 +1,19 @@
-/// When LikePod may hold the USB interface exclusively.
+/// When LikePod should pause for an audio-focus change.
 ///
-/// [focusHeld] means no other app has taken focus. A failed or still-pending
-/// focus request is still [focusHeld]: lifeme can refuse the request while
-/// the DAC is free, and that must not block direct USB. Home does not matter.
-/// Only a real loss clears [focusHeld].
-bool claimDirectUsb({
-  required bool focusHeld,
-  required bool userWantsPlayback,
-}) {
-  return focusHeld && userWantsPlayback;
-}
-
-/// Full loss and transient loss release the DAC once the native side has
-/// decided another background app took audio. A duck does not: lifeme
-/// delivers one during LikePod's own playback, and releasing there closed
-/// exclusive USB. Bilibili and Douyin take focus with a real loss.
-bool releaseExclusiveOnFocus(String change) {
+/// Playback uses the system mixer. A full loss or a transient loss always
+/// pauses. A duck pauses only in the background, where feed apps take the
+/// output with MAY_DUCK. Focus returning never starts playback.
+bool pauseForFocusChange(String change, {required bool inBackground}) {
   switch (change) {
     case 'loss':
     case 'lossTransient':
       return true;
+    case 'duck':
+      return inBackground;
     default:
       return false;
   }
 }
+
+/// Focus gain restores readiness only. The user presses play.
+bool resumeOnFocusGain() => false;

@@ -13,10 +13,6 @@ class ClickWheel extends StatefulWidget {
   final VoidCallback onPrevious;
   final VoidCallback onNext;
 
-  /// Fired when the center dot is pressed and held. Opens the quality-mode
-  /// picker.
-  final VoidCallback onCenterLongPress;
-
   const ClickWheel({
     super.key,
     required this.theme,
@@ -26,7 +22,6 @@ class ClickWheel extends StatefulWidget {
     required this.onPlayPause,
     required this.onPrevious,
     required this.onNext,
-    required this.onCenterLongPress,
   });
 
   @override
@@ -227,10 +222,6 @@ class _ClickWheelState extends State<ClickWheel> {
                     onTapUp: (_) {
                       setState(() => _isCenterPressed = false);
                       widget.onSelect();
-                    },
-                    onLongPress: () {
-                      setState(() => _isCenterPressed = false);
-                      widget.onCenterLongPress();
                     },
                     onTapCancel: () => setState(() => _isCenterPressed = false),
                     child: AnimatedContainer(

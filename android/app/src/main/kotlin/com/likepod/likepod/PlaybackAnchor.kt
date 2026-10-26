@@ -6,13 +6,8 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 
 /**
- * Keeps the process in the foreground-service state after the activity
- * leaves the screen.
- *
- * A silent speaker track does not count as playback on the devices that
- * mute background audio, and it can move the audio policy off the DAC.
- * The service holds a media-playback (and, while direct USB is open, a
- * connected-device) foreground type instead.
+ * Keeps a media-playback foreground service up after the activity leaves
+ * the screen. The stream itself is the system mixer.
  */
 object PlaybackAnchor {
     private const val TAG = "LikePod"
@@ -21,35 +16,16 @@ object PlaybackAnchor {
     private var playing = false
 
     @Volatile
-    private var direct = false
-
-    @Volatile
     private var serviceStarted = false
-
-    /** `direct` or `mixer` after a background handoff. Empty until then. */
-    @Volatile
-    var backgroundPath: String = ""
-        private set
 
     fun isPlaying(): Boolean = playing
 
     fun setPlaying(context: Context, active: Boolean) {
         playing = active
-        if (!active) {
-            backgroundPath = ""
-        } else {
+        if (active) {
             serviceStarted = true
         }
         refresh(context.applicationContext)
-    }
-
-    fun setDirect(context: Context, active: Boolean) {
-        direct = active
-        refresh(context.applicationContext)
-    }
-
-    fun noteBackground(path: String) {
-        backgroundPath = path
     }
 
     /** Re-acquires the service if playback is still supposed to be running. */
@@ -71,7 +47,6 @@ object PlaybackAnchor {
             val intent = Intent(app, PlaybackService::class.java)
             if (playing) {
                 serviceStarted = true
-                intent.putExtra(PlaybackService.EXTRA_USB, direct)
                 ContextCompat.startForegroundService(app, intent)
             } else if (serviceStarted) {
                 serviceStarted = false

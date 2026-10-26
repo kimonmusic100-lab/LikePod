@@ -23,6 +23,8 @@ Shell theme, screen theme, click-wheel sound, haptics, shuffle, repeat, volume, 
 
 ## Android 后台播放
 
+播放走系统混音（just_audio）。插入 USB DAC 时由 Android 自己的 USB 音频路由出声，应用不申请 usbfs、不独占接口。其他应用拿走音频焦点时 LikePod 暂停，焦点回来后不会自动续播，需要再按播放。
+
 播放开始后，`audio_service` 会启动 `mediaPlayback` 前台服务，通知栏和锁屏提供上一首、播放/暂停、下一首，并跟随现有的随机与重复逻辑。暂停时服务仍保持前台（`androidStopForegroundOnPause: false`），避免 Android 12+ 在后台无法重新开始前台服务。
 
 `audio_service` starts a `mediaPlayback` foreground service when playback begins. The notification and lock screen expose previous, play/pause, and next, using the same shuffle and repeat rules. The service stays in the foreground while paused so Android 12+ can resume it.

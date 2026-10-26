@@ -28,11 +28,6 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
   bool _soundEnabled = true;
   bool _hapticsEnabled = true;
   List<String> _musicFolders = const [];
-  bool _qualityModeHigh = true;
-
-  // Quality-mode picker opened by a double tap on the center dot.
-  bool _modePopupVisible = false;
-  int _modePopupIndex = 0;
 
   // Navigation Stack
   final List<PodMenuScreen> _screenStack = [];
@@ -134,8 +129,6 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
     _musicFolders = List.unmodifiable(settings.musicFolders);
     // Must be set before the first scan, which runs in MusicService.init().
     _musicService.setMusicFolders(_musicFolders);
-    _qualityModeHigh = settings.highQuality;
-    unawaited(_musicService.setQualityMode(_qualityModeHigh));
     _songRatings
       ..clear()
       ..addAll(settings.ratings);
@@ -174,7 +167,6 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
       shell: _shellType.name,
       soundEnabled: _soundEnabled,
       hapticsEnabled: _hapticsEnabled,
-      highQuality: _qualityModeHigh,
       musicFolders: List<String>.from(_musicFolders),
       shuffle: _musicService.shuffleMode.name,
       repeat: _musicService.repeatMode.name,
@@ -246,7 +238,6 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
         state == AppLifecycleState.inactive ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.paused;
-    _musicService.setInBackground(background);
     if (background || state == AppLifecycleState.detached) {
       _schedulePersist(immediate: true);
       if (_isPlaying && state != AppLifecycleState.detached) {
@@ -259,9 +250,6 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
   ShellThemeType get shellType => _shellType;
   bool get soundEnabled => _soundEnabled;
   bool get hapticsEnabled => _hapticsEnabled;
-  bool get qualityModeHigh => _qualityModeHigh;
-  bool get modePopupVisible => _modePopupVisible;
-  int get modePopupIndex => _modePopupIndex;
   PodTheme get currentTheme => PodTheme.getTheme(_shellType);
 
   bool get isPlaying => _isPlaying;
@@ -1011,21 +999,7 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
   void onRotate(int stepDelta) {
     if (stepDelta == 0) return;
 
-    // 0. Quality-mode picker: the ring moves the highlight.
-    if (_modePopupVisible) {
-      final next = (_modePopupIndex + stepDelta).clamp(0, 1);
-      if (next != _modePopupIndex) {
-        _modePopupIndex = next;
-        _soundService.playTick(
-          soundEnabled: _soundEnabled,
-          hapticsEnabled: _hapticsEnabled,
-        );
-        notifyListeners();
-      }
-      return;
-    }
-
-    // 1. Cover Flow rotary album navigation
+    // Cover Flow rotary album navigation
     if (currentScreen.id == 'cover_flow_view' && _albums.isNotEmpty) {
       final newIdx = (_coverFlowIndex + stepDelta).clamp(0, _albums.length - 1);
       if (newIdx != _coverFlowIndex) {
@@ -1119,44 +1093,8 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  /// A long press on the click-wheel center dot opens the quality-mode
-  /// picker.
-  void onCenterLongPress() {
-    _soundService.playSelect(
-      soundEnabled: _soundEnabled,
-      hapticsEnabled: _hapticsEnabled,
-    );
-    _modePopupIndex = _qualityModeHigh ? 0 : 1;
-    _modePopupVisible = true;
-    notifyListeners();
-  }
-
-  void _closeModePopup({required bool apply}) {
-    if (!_modePopupVisible) return;
-    _modePopupVisible = false;
-    if (apply) {
-      final high = _modePopupIndex == 0;
-      if (high != _qualityModeHigh) {
-        _qualityModeHigh = high;
-        unawaited(_musicService.setQualityMode(high));
-        _schedulePersist(immediate: true);
-      }
-    }
-    notifyListeners();
-  }
-
   void onSelect() {
-    // 0. Quality-mode picker: the center dot confirms the highlighted row.
-    if (_modePopupVisible) {
-      _soundService.playSelect(
-        soundEnabled: _soundEnabled,
-        hapticsEnabled: _hapticsEnabled,
-      );
-      _closeModePopup(apply: true);
-      return;
-    }
-
-    // 1. Now Playing: Cycle Center Button Sub-Modes (Volume -> Scrub -> Rating -> Volume)
+    // Now Playing: Cycle Center Button Sub-Modes (Volume -> Scrub -> Rating -> Volume)
     if (currentScreen.id == 'now_playing_view') {
       _soundService.playSelect(
         soundEnabled: _soundEnabled,
@@ -1241,15 +1179,6 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void onMenu() {
-    // The quality-mode picker closes first, like a modal sheet.
-    if (_modePopupVisible) {
-      _soundService.playSelect(
-        soundEnabled: _soundEnabled,
-        hapticsEnabled: _hapticsEnabled,
-      );
-      _closeModePopup(apply: false);
-      return;
-    }
     _volumeBarTimer?.cancel();
     _subModeTimer?.cancel();
     _isShowingVolume = false;
@@ -1268,8 +1197,6 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void onPlayPause() {
-    // Transport keys are ignored while the mode picker is up.
-    if (_modePopupVisible) return;
     _soundService.playSelect(
       soundEnabled: _soundEnabled,
       hapticsEnabled: _hapticsEnabled,
@@ -1278,7 +1205,6 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void onNext() {
-    if (_modePopupVisible) return;
     _soundService.playTick(
       soundEnabled: _soundEnabled,
       hapticsEnabled: _hapticsEnabled,
@@ -1287,7 +1213,6 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void onPrevious() {
-    if (_modePopupVisible) return;
     _soundService.playTick(
       soundEnabled: _soundEnabled,
       hapticsEnabled: _hapticsEnabled,

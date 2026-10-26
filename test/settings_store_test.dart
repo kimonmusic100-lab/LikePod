@@ -18,7 +18,6 @@ void main() {
     expect(settings.shell, AppSettings.defaultShell);
     expect(settings.soundEnabled, isTrue);
     expect(settings.hapticsEnabled, isTrue);
-    expect(settings.highQuality, isTrue);
     expect(settings.shuffle, 'off');
     expect(settings.repeat, 'all');
     expect(settings.volume, isNull);
@@ -35,7 +34,6 @@ void main() {
         shell: 'u2Special',
         soundEnabled: false,
         hapticsEnabled: true,
-        highQuality: false,
         shuffle: 'songs',
         repeat: 'one',
         volume: 0.42,
@@ -51,7 +49,6 @@ void main() {
     expect(loaded.shell, 'u2Special');
     expect(loaded.soundEnabled, isFalse);
     expect(loaded.hapticsEnabled, isTrue);
-    expect(loaded.highQuality, isFalse);
     expect(loaded.shuffle, 'songs');
     expect(loaded.repeat, 'one');
     expect(loaded.volume, closeTo(0.42, 0.001));
