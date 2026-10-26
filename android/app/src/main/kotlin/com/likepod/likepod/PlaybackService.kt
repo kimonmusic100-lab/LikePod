@@ -33,7 +33,7 @@ class PlaybackService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        promote()
+        promote(intent?.getBooleanExtra(EXTRA_WAITING, false) == true)
         acquireWake()
         return START_NOT_STICKY
     }
@@ -43,8 +43,8 @@ class PlaybackService : Service() {
         super.onDestroy()
     }
 
-    private fun promote() {
-        val notification = buildNotification()
+    private fun promote(waiting: Boolean) {
+        val notification = buildNotification(waiting)
         if (Build.VERSION.SDK_INT >= 29) {
             try {
                 startForeground(
@@ -60,7 +60,7 @@ class PlaybackService : Service() {
         startForeground(NOTIFICATION_ID, notification)
     }
 
-    private fun buildNotification(): Notification {
+    private fun buildNotification(waiting: Boolean): Notification {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(NotificationManager::class.java)
             if (manager.getNotificationChannel(CHANNEL_ID) == null) {
@@ -77,7 +77,7 @@ class PlaybackService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle("LikePod")
-            .setContentText("正在后台播放")
+            .setContentText(if (waiting) "等待继续播放" else "正在后台播放")
             .setOngoing(true)
             .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
@@ -115,6 +115,7 @@ class PlaybackService : Service() {
     companion object {
         private const val TAG = "LikePod"
         const val EXTRA_STOP = "stop"
+        const val EXTRA_WAITING = "waiting"
         private const val CHANNEL_ID = "com.likepod.likepod.channel.keepalive"
         private const val NOTIFICATION_ID = 1125
     }

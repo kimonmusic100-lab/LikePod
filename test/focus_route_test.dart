@@ -94,6 +94,18 @@ void main() {
     );
   });
 
+  test('a yield resume waits, then fades back to unity', () {
+    expect(yieldResumeGap, const Duration(milliseconds: 600));
+    expect(yieldResumeGap.inMilliseconds, inInclusiveRange(400, 800));
+    expect(yieldFadeDuration, const Duration(milliseconds: 800));
+    expect(yieldFadeDuration.inMilliseconds, inInclusiveRange(500, 1000));
+    expect(resumeDelay(fromFocusYield: false), Duration.zero);
+    expect(resumeDelay(fromFocusYield: true), yieldResumeGap);
+    expect(yieldFadeGain(0, 8), 0);
+    expect(yieldFadeGain(8, 8), 1);
+    expect(yieldFadeGain(4, 8), closeTo(0.5, 0.001));
+  });
+
   test('reclaim waits for another app and not for our own row', () {
     const self = 10234;
     expect(

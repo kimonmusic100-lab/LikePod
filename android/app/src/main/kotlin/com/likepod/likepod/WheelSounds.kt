@@ -34,7 +34,11 @@ object WheelSounds {
     private var selectId = 0
     private var tickReady = false
     private var selectReady = false
+    private var lastTickAt = 0L
     private val pending = ArrayList<String>()
+
+    /** One audible tick. Faster events overlap the same 48 ms clip. */
+    private const val TICK_GAP_MS = 80L
 
     fun prepare(context: Context) {
         ensure(context.applicationContext)
@@ -49,14 +53,28 @@ object WheelSounds {
     fun play(context: Context, kind: String): Boolean {
         val app = context.applicationContext
         ensure(app)
-        if (playPool(kind)) return true
+        if (kind != "select" && !tickDue()) return true
+        if (playPool(kind)) {
+            if (kind != "select") lastTickAt = android.os.SystemClock.uptimeMillis()
+            return true
+        }
         val id = soundId(kind)
         val ready = if (kind == "select") selectReady else tickReady
         if (pool != null && id != 0 && !ready) {
+            if (kind == "select") {
+                pending.removeAll { it == "select" }
+            } else {
+                pending.removeAll { it != "select" }
+                lastTickAt = android.os.SystemClock.uptimeMillis()
+            }
             pending.add(kind)
             return true
         }
         return false
+    }
+
+    private fun tickDue(): Boolean {
+        return android.os.SystemClock.uptimeMillis() - lastTickAt >= TICK_GAP_MS
     }
 
     private fun ensure(app: Context) {
@@ -77,9 +95,8 @@ object WheelSounds {
             }
             val queued = pending.toList()
             pending.clear()
-            for (kind in queued) {
-                playPool(kind)
-            }
+            if (queued.any { it == "select" }) playPool("select")
+            if (queued.any { it != "select" }) playPool("tick")
         }
         pool = created
         val tick = writeAsset(app, "tick.wav")

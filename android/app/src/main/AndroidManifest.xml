@@ -11,6 +11,9 @@
     <!-- HyperOS/MIUI 在音频暂停后 ~20s 冻结进程(无视前台服务)。
          申请加入电池优化白名单,通知栏控制在暂停后仍可用。 -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- While a focus yield is armed, an exact alarm thaws a frozen process.
+         Inexact is used when the user has not allowed exact alarms. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:label="LikePod"
@@ -68,6 +71,10 @@
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".YieldAlarmReceiver"
+            android:exported="false" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

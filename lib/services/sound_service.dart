@@ -4,6 +4,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'wheel_tick.dart';
+
 /// Wheel ticks and center-button clicks.
 ///
 /// Android plays these from a warm SoundPool on the music stream, so the
@@ -35,6 +37,7 @@ class SoundService {
   _ClipRing? _ticks;
   _ClipRing? _selects;
   Future<void>? _starting;
+  final WheelTickGate _tickGate = WheelTickGate();
 
   Future<void> init() {
     return _starting ??= _load();
@@ -97,7 +100,8 @@ class SoundService {
   void playTick({bool soundEnabled = true, bool hapticsEnabled = true}) {
     // Sound first. The haptic is a second channel message and would
     // otherwise sit ahead of the tick.
-    if (soundEnabled) {
+    if (soundEnabled &&
+        _tickGate.allow(DateTime.now().millisecondsSinceEpoch)) {
       unawaited(_play('tick'));
     }
     if (hapticsEnabled) {

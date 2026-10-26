@@ -35,6 +35,9 @@ class MusicService {
   /// A late pause from the old generation must not stop the newer play.
   int _transportEpoch = 0;
 
+  /// Bumps when a fade should stop (user volume, user pause, a new play).
+  int _fadeEpoch = 0;
+
   /// Another app took the output. Pause the player but keep the focus
   /// request, so Android can hand it back when that app lets go.
   void _onNativeFocusLost() {
@@ -84,7 +87,10 @@ class MusicService {
     if (_resumeInFlight || epoch != _transportEpoch) return;
     _resumeInFlight = true;
     try {
-      await resume();
+      await Future<void>.delayed(yieldResumeGap);
+      if (epoch != _transportEpoch || !_focusYield.pausedByFocusLoss) return;
+      if (_engine.playerPlaying()) return;
+      await resume(fadeIn: true);
     } finally {
       _resumeInFlight = false;
     }
@@ -571,8 +577,12 @@ class MusicService {
 
   Future<void> pause() async {
     _transportEpoch++;
+    _fadeEpoch++;
     _focusYield.noteUserPause();
     _intendPlay = false;
+    try {
+      await _engine.player?.setVolume(1.0);
+    } catch (_) {}
     if (!kIsWeb && Platform.isAndroid) {
       try {
         await _channel.invokeMethod<void>('userPause');
@@ -583,9 +593,10 @@ class MusicService {
     await player.pause();
   }
 
-  Future<void> resume() async {
+  Future<void> resume({bool fadeIn = false}) async {
     if (!ensurePlayer()) return;
     _transportEpoch++;
+    if (!fadeIn) _fadeEpoch++;
     final yielded = _focusYield.pausedByFocusLoss;
     _focusYield.noteUserPause();
     await _ensureNotificationPermission();
@@ -604,18 +615,53 @@ class MusicService {
       if (!granted) {
         _intendPlay = false;
         if (yielded) _focusYield.noteFocusLost(active: true);
+        try {
+          await _engine.player?.setVolume(1.0);
+        } catch (_) {}
         return;
       }
     }
+    final player = _engine.player!;
+    try {
+      // Yield resume ramps the player only. System volume stays put, and
+      // unity at the end is the user's current level.
+      await player.setVolume(fadeIn ? 0 : 1);
+    } catch (_) {}
     unawaited(
-      _engine.player!.play().then(
+      player.play().then(
         (_) {},
         onError: (Object e) {
           debugPrint('play failed after resume: $e');
         },
       ),
     );
+    if (fadeIn) unawaited(_fadeToUnity());
     await _engine.syncRoute();
+  }
+
+  Future<void> _fadeToUnity() async {
+    final fade = ++_fadeEpoch;
+    final player = _engine.player;
+    if (player == null) return;
+    const steps = 16;
+    final slice = yieldFadeDuration ~/ steps;
+    for (var step = 1; step <= steps; step++) {
+      if (fade != _fadeEpoch || !_intendPlay) {
+        try {
+          await player.setVolume(1);
+        } catch (_) {}
+        return;
+      }
+      try {
+        await player.setVolume(yieldFadeGain(step, steps));
+      } catch (_) {}
+      await Future<void>.delayed(slice);
+    }
+    if (fade == _fadeEpoch) {
+      try {
+        await player.setVolume(1);
+      } catch (_) {}
+    }
   }
 
   Future<void> togglePlayPause() async {
@@ -800,6 +846,7 @@ class MusicService {
   }
 
   Future<void> setVolume(double vol, {bool writeSystem = true}) async {
+    _fadeEpoch++;
     _volume = vol.clamp(0.0, 1.0);
     try {
       // Loudness is the system music stream. Player volume stays at unity

@@ -27,6 +27,12 @@ import androidx.annotation.RequiresApi
  * Coming to the foreground only rechecks an arm that already exists; it is
  * not itself a reason to play. The Home transition is not another app.
  *
+ * While the yield is armed the keepalive service and its wake lock stay up,
+ * and a few-second alarm retries the check. Focus loss used to stop that
+ * service, so after a long video HyperOS froze the process and nothing
+ * ran until the activity was opened. The alarm is not scheduled unless a
+ * yield is armed. The comfortable gap before playback is on the Dart side.
+ *
  * A playback row pauses us only when its uid is a different app. Our own
  * player, and a row whose uid cannot be read, must not: on PME110 that
  * misread turned "play" into pause → reclaim → play until the process died.
@@ -35,7 +41,10 @@ import androidx.annotation.RequiresApi
 object PlaybackFocus {
     private const val TAG = "LikePod"
     private const val RECLAIM_DELAY_MS = 700L
-    private const val RECLAIM_POLL_MS = 1000L
+    private const val RECLAIM_POLL_MS = 500L
+
+    /** Covers the Dart gap and fade, then drops the yield wake if play never started. */
+    private const val YIELD_HOLD_AFTER_RESUME_MS = 4000L
 
     @Volatile
     private var granted = false
@@ -59,11 +68,14 @@ object PlaybackFocus {
     private var suppressGain = false
     private var reclaimPosted = false
     private var hiddenTried = false
+    private var yieldGeneration = 0
     private var mainHandler: Handler? = null
     private var appContext: Context? = null
     private var watcher: AudioManager.AudioPlaybackCallback? = null
 
     fun isGranted(): Boolean = listening && granted
+
+    fun isAwaitingReturn(): Boolean = listening && awaitingReturn
 
     fun setBackground(background: Boolean) {
         backgrounded = background
@@ -104,6 +116,7 @@ object PlaybackFocus {
         granted = false
         reclaimPosted = false
         mainHandler?.removeCallbacks(reclaimRunnable)
+        PlaybackAnchor.setYieldHeld(context, false)
         unregisterWatcher()
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         if (Build.VERSION.SDK_INT >= 26) {
@@ -219,8 +232,10 @@ object PlaybackFocus {
                 awaitingReturn = false
                 reclaimPosted = false
                 mainHandler?.removeCallbacks(reclaimRunnable)
+                appContext?.let { YieldAlarm.disarm(it) }
                 Log.i(TAG, "focus gain after another app released audio")
                 onGained?.invoke()
+                scheduleYieldRelease()
             }
         }
     }
@@ -230,12 +245,41 @@ object PlaybackFocus {
         granted = false
         val shouldPause = !awaitingReturn || PlaybackAnchor.isPlaying()
         awaitingReturn = true
+        yieldGeneration++
+        // Hold the service before the pause callback. That callback clears
+        // the playing flag, which used to stop the service and let the
+        // process freeze for the rest of a long video.
+        appContext?.let {
+            PlaybackAnchor.setYieldHeld(it, true)
+            YieldAlarm.arm(it)
+        }
         if (shouldPause) onLost?.invoke()
         scheduleReclaim()
     }
 
+    /**
+     * Alarm entry. Runs the same reclaim as the in-process poll.
+     * Returns true when the yield is still armed.
+     */
+    fun nudgeFromAlarm(): Boolean {
+        if (!listening || !awaitingReturn) return false
+        reclaimPosted = false
+        mainHandler?.removeCallbacks(reclaimRunnable)
+        reclaimNow()
+        return listening && awaitingReturn
+    }
+
     private fun scheduleReclaim() {
         postReclaim(RECLAIM_DELAY_MS)
+    }
+
+    private fun scheduleYieldRelease() {
+        val handler = mainHandler ?: return
+        val generation = yieldGeneration
+        handler.postDelayed({
+            if (generation != yieldGeneration || PlaybackAnchor.isPlaying()) return@postDelayed
+            appContext?.let { PlaybackAnchor.setYieldHeld(it, false) }
+        }, YIELD_HOLD_AFTER_RESUME_MS)
     }
 
     /**
@@ -261,6 +305,7 @@ object PlaybackFocus {
             // Already audible. Completing the arm must not call play again.
             awaitingReturn = false
             granted = true
+            appContext?.let { YieldAlarm.disarm(it) }
             return
         }
         val context = appContext ?: return
@@ -274,7 +319,9 @@ object PlaybackFocus {
         if (code == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             granted = true
             awaitingReturn = false
+            appContext?.let { YieldAlarm.disarm(it) }
             onGained?.invoke()
+            scheduleYieldRelease()
         } else {
             // DELAYED or a refused request still needs another look. A GAIN
             // callback can arrive first; this poll covers the one that does not.

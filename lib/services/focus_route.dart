@@ -40,6 +40,28 @@ class FocusYield {
   }
 }
 
+/// Quiet moment after the other app has released audio, before we start.
+/// Short enough to feel responsive, long enough not to jump on the cut.
+const yieldResumeGap = Duration(milliseconds: 600);
+
+/// Ramp the player from silence to unity after a yield resume.
+/// The system music volume is unchanged; unity matches the user's setting.
+const yieldFadeDuration = Duration(milliseconds: 800);
+
+/// Linear fade step. [step] is 1-based and [stepCount] is the last step.
+double yieldFadeGain(int step, int stepCount) {
+  if (stepCount <= 0) return 1;
+  final gain = step / stepCount;
+  if (gain < 0) return 0;
+  if (gain > 1) return 1;
+  return gain;
+}
+
+/// Manual play has no inserted gap. A focus yield waits [yieldResumeGap].
+Duration resumeDelay({required bool fromFocusYield}) {
+  return fromFocusYield ? yieldResumeGap : Duration.zero;
+}
+
 /// Reclaim focus only for an armed yield, and never while the interrupter
 /// is still playing. Foreground return is not a reason by itself.
 bool shouldReclaimFocus({
