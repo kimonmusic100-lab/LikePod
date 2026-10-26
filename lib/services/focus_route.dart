@@ -2,7 +2,9 @@
 ///
 /// Playback uses the system mixer. A full loss or a transient loss always
 /// pauses. A duck pauses only in the background, where feed apps take the
-/// output with MAY_DUCK.
+/// output with MAY_DUCK. Transient loss delivers gain when the other app
+/// releases (小红书). Permanent loss does not, so Android reclaims focus
+/// once no other app is still playing (B站 / 抖音).
 bool pauseForFocusChange(String change, {required bool inBackground}) {
   switch (change) {
     case 'loss':
@@ -36,4 +38,14 @@ class FocusYield {
     pausedByFocusLoss = false;
     return resume;
   }
+}
+
+/// Reclaim focus only for an armed yield, and never while the interrupter
+/// is still playing. Foreground return is not a reason by itself.
+bool shouldReclaimFocus({
+  required bool awaitingReturn,
+  required bool listening,
+  required bool otherAppPlaying,
+}) {
+  return listening && awaitingReturn && !otherAppPlaying;
 }

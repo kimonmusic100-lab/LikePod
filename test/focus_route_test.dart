@@ -27,6 +27,42 @@ void main() {
     expect(yield.shouldResume(), isFalse);
   });
 
+  test('reclaim only an armed yield after the other app stops', () {
+    expect(
+      shouldReclaimFocus(
+        awaitingReturn: true,
+        listening: true,
+        otherAppPlaying: false,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldReclaimFocus(
+        awaitingReturn: true,
+        listening: true,
+        otherAppPlaying: true,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldReclaimFocus(
+        awaitingReturn: false,
+        listening: true,
+        otherAppPlaying: false,
+      ),
+      isFalse,
+      reason: 'user pause, cold start, or foreground alone',
+    );
+    expect(
+      shouldReclaimFocus(
+        awaitingReturn: true,
+        listening: false,
+        otherAppPlaying: false,
+      ),
+      isFalse,
+    );
+  });
+
   test('a duck pauses only while LikePod is in the background', () {
     expect(pauseForFocusChange('duck', inBackground: true), isTrue);
     expect(pauseForFocusChange('duck', inBackground: false), isFalse);
