@@ -14,7 +14,9 @@ import androidx.annotation.RequiresApi
  *
  * A full or transient loss pauses playback. A duck pauses only while the
  * activity is in the background, which is how feed apps take the output.
- * Focus coming back does not start playback; the user presses play.
+ * The request stays registered across that pause. When the other app
+ * releases focus, [onGained] runs so playback can continue. A pause the
+ * user asked for abandons the request and does not resume.
  * The Home transition itself is not another app.
  */
 object PlaybackFocus {
@@ -30,6 +32,7 @@ object PlaybackFocus {
     private var backgrounded = false
 
     private var onLost: (() -> Unit)? = null
+    private var onGained: (() -> Unit)? = null
     private var requesting = false
     private var requestEpoch = 0
     private var selfEchoEpoch = 0
@@ -77,8 +80,10 @@ object PlaybackFocus {
         attributes: AudioAttributes,
         handler: Handler,
         onLost: () -> Unit,
+        onGained: () -> Unit,
     ): Boolean {
         this.onLost = onLost
+        this.onGained = onGained
         listening = true
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val epoch = ++requestEpoch
@@ -142,7 +147,13 @@ object PlaybackFocus {
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
                 granted = true
-                Log.i(TAG, "focus gain, playback stays paused until play is pressed")
+                val own = requesting || (selfEchoEpoch != 0 && selfEchoEpoch == requestEpoch)
+                if (own) {
+                    Log.i(TAG, "focus gain from own request")
+                    return
+                }
+                Log.i(TAG, "focus gain after another app released audio")
+                onGained?.invoke()
             }
         }
     }

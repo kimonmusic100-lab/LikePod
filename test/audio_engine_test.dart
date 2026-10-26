@@ -143,11 +143,15 @@ void main() {
     expect(engine.snapshot.routeLine, '路由：扬声器');
   });
 
-  test('focus loss notifies the listener and focus gain does not resume', () async {
+  test('focus loss and focus gain each notify their listener', () async {
     var lost = 0;
+    var gained = 0;
     final engine = AudioEngine(channel: channel, routeOnThisPlatform: true);
     engine.onFocusLost = () {
       lost += 1;
+    };
+    engine.onFocusGained = () {
+      gained += 1;
     };
     engine.startListening();
     final messenger =
@@ -162,10 +166,11 @@ void main() {
     await messenger.handlePlatformMessage(
       channel.name,
       const StandardMethodCodec().encodeMethodCall(
-        const MethodCall('onAudioFocusGained', true),
+        const MethodCall('onAudioFocusGained'),
       ),
       (_) {},
     );
     expect(lost, 1);
+    expect(gained, 1);
   });
 }

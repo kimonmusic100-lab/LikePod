@@ -23,8 +23,11 @@ class AudioEngine {
   OutputSnapshot snapshot = OutputSnapshot.unknown;
   void Function()? onSnapshot;
 
-  /// Another app took audio focus. The player should pause and stay paused.
+  /// Another app took audio focus. Pause without dropping the focus request.
   void Function()? onFocusLost;
+
+  /// The interrupting app released focus. Resume only a yield pause.
+  void Function()? onFocusGained;
 
   bool playerPlaying() {
     try {
@@ -70,6 +73,8 @@ class AudioEngine {
         await syncRoute();
       } else if (call.method == 'onAudioFocusLost') {
         onFocusLost?.call();
+      } else if (call.method == 'onAudioFocusGained') {
+        onFocusGained?.call();
       }
     });
   }

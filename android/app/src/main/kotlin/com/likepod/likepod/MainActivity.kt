@@ -184,10 +184,18 @@ class MainActivity : AudioServiceActivity() {
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
             .build()
-        return PlaybackFocus.hold(this, attributes, mainHandler) {
-            PlaybackAnchor.setPlaying(this, false)
-            mediaChannel?.invokeMethod("onAudioFocusLost", null)
-        }
+        return PlaybackFocus.hold(
+            this,
+            attributes,
+            mainHandler,
+            onLost = {
+                PlaybackAnchor.setPlaying(this, false)
+                mediaChannel?.invokeMethod("onAudioFocusLost", null)
+            },
+            onGained = {
+                mediaChannel?.invokeMethod("onAudioFocusGained", null)
+            },
+        )
     }
 
     private fun readMusicVolumeRatio(): Double {

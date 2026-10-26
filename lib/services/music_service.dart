@@ -9,6 +9,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../models/song_model.dart';
 import 'audio_engine.dart';
+import 'focus_route.dart';
 import 'output_probe.dart';
 
 enum PodShuffleMode { off, songs }
@@ -20,6 +21,7 @@ class MusicService {
   factory MusicService() => _instance;
   MusicService._internal() {
     _engine.onFocusLost = _onNativeFocusLost;
+    _engine.onFocusGained = _onNativeFocusGained;
   }
 
   static const MethodChannel _channel = MethodChannel('com.likepod/media');
@@ -27,10 +29,48 @@ class MusicService {
   bool _askedNotificationPermission = false;
   bool _anchorHooked = false;
   bool _intendPlay = false;
+  final FocusYield _focusYield = FocusYield();
 
-  /// Another app took audio focus. Pause and stay paused until play is pressed.
+  /// Another app took the output. Pause the player but keep the focus
+  /// request, so Android can hand it back when that app lets go.
   void _onNativeFocusLost() {
-    unawaited(pause());
+    final playing = _engine.player?.playing ?? false;
+    _focusYield.noteFocusLost(active: playing || _intendPlay);
+    if (!_focusYield.pausedByFocusLoss) return;
+    unawaited(_pauseYieldedPlayer());
+  }
+
+  Future<void> _pauseYieldedPlayer() async {
+    final player = _engine.player;
+    if (player == null || !player.playing) return;
+    await player.pause();
+  }
+
+  bool _resumeInFlight = false;
+
+  /// Focus returned from the interrupting app, not from our own request.
+  void _onNativeFocusGained() {
+    if (_resumeInFlight) return;
+    if (_engine.playerPlaying()) {
+      _focusYield.noteUserPause();
+      return;
+    }
+    if (!_focusYield.pausedByFocusLoss) return;
+    if (currentSong == null) {
+      _focusYield.noteUserPause();
+      return;
+    }
+    unawaited(_resumeAfterYield());
+  }
+
+  Future<void> _resumeAfterYield() async {
+    if (_resumeInFlight) return;
+    _resumeInFlight = true;
+    try {
+      await resume();
+    } finally {
+      _resumeInFlight = false;
+    }
   }
 
   final Map<int, Uint8List?> _artworkCache = {};
@@ -443,6 +483,7 @@ class MusicService {
     }
 
     try {
+      _focusYield.noteUserPause();
       _intendPlay = play;
       var focusGranted = true;
       if (play && !kIsWeb && Platform.isAndroid) {
@@ -511,6 +552,7 @@ class MusicService {
   }
 
   Future<void> pause() async {
+    _focusYield.noteUserPause();
     _intendPlay = false;
     if (!kIsWeb && Platform.isAndroid) {
       try {
@@ -524,6 +566,8 @@ class MusicService {
 
   Future<void> resume() async {
     if (!ensurePlayer()) return;
+    final yielded = _focusYield.pausedByFocusLoss;
+    _focusYield.noteUserPause();
     await _ensureNotificationPermission();
     if (currentSong == null && _allSongs.isNotEmpty) {
       await playSong(_allSongs.first, queue: _allSongs);
@@ -539,6 +583,7 @@ class MusicService {
       } catch (_) {}
       if (!granted) {
         _intendPlay = false;
+        if (yielded) _focusYield.noteFocusLost(active: true);
         return;
       }
     }
@@ -573,6 +618,7 @@ class MusicService {
     if (_currentQueue.isEmpty) return;
 
     if (_repeatMode == PodRepeatMode.one) {
+      _focusYield.noteUserPause();
       await seek(Duration.zero);
       _intendPlay = true;
       await _engine.player?.play();
@@ -591,6 +637,7 @@ class MusicService {
         if (_repeatMode == PodRepeatMode.all) {
           nextIndex = 0;
         } else {
+          _focusYield.noteUserPause();
           _intendPlay = false;
           await _engine.player?.stop();
           return;
