@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:likepod/services/spectrum_feed.dart';
 import 'package:likepod/services/wave_style.dart';
 import 'package:likepod/widgets/now_playing_wave.dart';
 
@@ -12,6 +13,20 @@ void main() {
     expect(WaveStyle.fromName('bars'), WaveStyle.mirror);
     expect(WaveStyle.fromName('radial'), WaveStyle.mirror);
     expect(WaveStyle.fromName('nope'), WaveStyle.mirror);
+  });
+
+  test('a flat capture is not treated as live audio', () {
+    expect(
+      spectrumLooksLive(List<double>.filled(spectrumBandCount, 0)),
+      isFalse,
+    );
+    expect(
+      spectrumLooksLive(List<double>.filled(spectrumBandCount, 0.02)),
+      isFalse,
+    );
+    final hit = List<double>.filled(spectrumBandCount, 0);
+    hit[4] = 0.2;
+    expect(spectrumLooksLive(hit), isTrue);
   });
 
   test('spectrum easing rises faster than it falls', () {

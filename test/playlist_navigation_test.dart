@@ -184,8 +184,10 @@ void main() {
     final pressed = tester.widget<Transform>(
       find.byKey(const Key('click_wheel_center_face')),
     );
-    expect(pressed.transform.storage[0], lessThan(0.92));
-    expect(pressed.transform.getTranslation().y, greaterThan(3));
+    expect(pressed.transform.storage[0], greaterThan(0.94));
+    expect(pressed.transform.storage[0], lessThan(0.98));
+    expect(pressed.transform.getTranslation().y, greaterThan(1));
+    expect(pressed.transform.getTranslation().y, lessThan(2.2));
     await _saveShot(tester, 'center-press-vc42.png');
     await gesture.up();
     await tester.pump();

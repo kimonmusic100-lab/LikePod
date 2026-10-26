@@ -78,7 +78,7 @@ class MainActivity : AudioServiceActivity() {
                 }
             }
         WheelSounds.prepare(this)
-        trackSpectrum = TrackSpectrum(flutterEngine.dartExecutor.binaryMessenger).also {
+        trackSpectrum = TrackSpectrum(this, flutterEngine.dartExecutor.binaryMessenger).also {
             it.attach()
         }
         registerOutputWatcher()

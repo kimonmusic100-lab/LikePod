@@ -159,6 +159,17 @@ class MusicService {
     );
   }
 
+  /// Now Playing asks again so a silent capture can show the permission.
+  Future<void> refreshSpectrum({bool promptIfSilent = false}) {
+    final player = _engine.player;
+    if (player == null) return Future<void>.value();
+    return SpectrumFeed.instance.follow(
+      player.playing ? player.androidAudioSessionId : null,
+      playing: player.playing,
+      promptIfSilent: promptIfSilent,
+    );
+  }
+
   /// Holds audio focus and the playback foreground service while [playing],
   /// including after the activity has left the screen.
   Future<void> anchorPlayback(bool playing) async {

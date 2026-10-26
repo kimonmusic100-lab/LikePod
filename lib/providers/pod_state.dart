@@ -1293,6 +1293,7 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
     // Already on Now Playing — refresh only.
     if (_screenStack.isNotEmpty && _screenStack.last.id == 'now_playing_view') {
       notifyListeners();
+      _pokeSpectrum();
       return;
     }
 
@@ -1313,6 +1314,12 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
     _screenStack.add(nowPlayingScreen);
     _indexStack.add(0);
     notifyListeners();
+    _pokeSpectrum();
+  }
+
+  void _pokeSpectrum() {
+    if (!_isPlaying) return;
+    unawaited(_musicService.refreshSpectrum(promptIfSilent: true));
   }
 
   void _openCoverFlow() {

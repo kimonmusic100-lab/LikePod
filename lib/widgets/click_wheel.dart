@@ -68,16 +68,16 @@ class _ClickWheelState extends State<ClickWheel>
   void _depressCenter() {
     _centerPress.animateTo(
       1,
-      duration: const Duration(milliseconds: 110),
-      curve: Curves.easeIn,
+      duration: const Duration(milliseconds: 90),
+      curve: Curves.easeOut,
     );
   }
 
   void _releaseCenter() {
     _centerPress.animateTo(
       0,
-      duration: const Duration(milliseconds: 280),
-      curve: Curves.elasticOut,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutBack,
     );
   }
 
@@ -272,8 +272,13 @@ class _ClickWheelState extends State<ClickWheel>
                             key: const Key('click_wheel_center_face'),
                             alignment: Alignment.center,
                             transform: Matrix4.identity()
-                              ..translateByDouble(0, 4.2 * t, 0, 1)
-                              ..scaleByDouble(1 - 0.12 * t, 1 - 0.12 * t, 1, 1),
+                              ..translateByDouble(0, 1.6 * t, 0, 1)
+                              ..scaleByDouble(
+                                1 - 0.035 * t,
+                                1 - 0.035 * t,
+                                1,
+                                1,
+                              ),
                             child: Container(
                               width: diameter * _centerFraction,
                               height: diameter * _centerFraction,
