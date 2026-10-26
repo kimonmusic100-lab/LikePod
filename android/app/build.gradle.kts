@@ -47,6 +47,9 @@ android {
             ndk {
                 debugSymbolLevel = "NONE"
             }
+            vcsInfo {
+                include = false
+            }
         }
     }
 
@@ -55,6 +58,12 @@ android {
             // Compress libflutter.so / libapp.so inside the APK. resources.arsc
             // stays stored (aapt default) so install does not reject the package.
             useLegacyPackaging = true
+            // abiFilters does not cover Flutter plugin native assets.
+            excludes += setOf(
+                "**/armeabi-v7a/**",
+                "**/x86/**",
+                "**/x86_64/**",
+            )
         }
         exclude("DebugProbesKt.bin")
         exclude("kotlin-tooling-metadata.json")
