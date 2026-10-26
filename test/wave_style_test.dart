@@ -4,17 +4,6 @@ import 'package:likepod/services/wave_style.dart';
 import 'package:likepod/widgets/now_playing_wave.dart';
 
 void main() {
-  test('only the three kept styles, and retired names use the mirror', () {
-    expect(WaveStyle.values, hasLength(3));
-    expect(WaveStyle.fromName('mirror').label, '镜像柱');
-    expect(WaveStyle.fromName('dots').label, '点阵柱');
-    expect(WaveStyle.fromName('glow').label, '柔光柱');
-    expect(WaveStyle.fromName(null), WaveStyle.mirror);
-    expect(WaveStyle.fromName('bars'), WaveStyle.mirror);
-    expect(WaveStyle.fromName('radial'), WaveStyle.mirror);
-    expect(WaveStyle.fromName('nope'), WaveStyle.mirror);
-  });
-
   test('a flat capture is not treated as live audio', () {
     expect(
       spectrumLooksLive(List<double>.filled(spectrumBandCount, 0)),

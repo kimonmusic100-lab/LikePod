@@ -27,7 +27,6 @@ void main() {
     expect(settings.lastPositionMs, 0);
     expect(settings.lastQueueIds, isEmpty);
     expect(settings.playlists, isEmpty);
-    expect(settings.waveStyle, 'mirror');
   });
 
   test('theme, ratings, and resume point round-trip', () async {
@@ -51,7 +50,6 @@ void main() {
         playlists: [
           UserPlaylist(id: 'pl1', name: '通勤', songIds: [12, 4]),
         ],
-        waveStyle: 'glow',
       ),
     );
 
@@ -74,7 +72,16 @@ void main() {
     ]);
     expect(loaded.playlists.single.name, '通勤');
     expect(loaded.playlists.single.songIds, [12, 4]);
-    expect(loaded.waveStyle, 'glow');
+  });
+
+  test('a saved waveform choice is dropped', () async {
+    SharedPreferences.setMockInitialValues({
+      SettingsStore.retiredWaveStyleKey: 'glow',
+    });
+    final store = await SettingsStore.open();
+    await store.save(store.load());
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString(SettingsStore.retiredWaveStyleKey), isNull);
   });
 
   test('music folders decode tolerates junk and empty means all', () async {

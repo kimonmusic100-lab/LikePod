@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'playlist_library.dart';
-import 'wave_style.dart';
 
 /// Theme, click-wheel preferences, ratings, and resume point.
 class AppSettings {
@@ -28,7 +27,6 @@ class AppSettings {
   final int lastPositionMs;
   final List<int> lastQueueIds;
   final List<UserPlaylist> playlists;
-  final String waveStyle;
 
   const AppSettings({
     this.shell = defaultShell,
@@ -43,7 +41,6 @@ class AppSettings {
     this.lastPositionMs = 0,
     this.lastQueueIds = const [],
     this.playlists = const [],
-    this.waveStyle = 'mirror',
   });
 }
 
@@ -62,7 +59,9 @@ class SettingsStore {
   static const lastPositionKey = 'last_position_ms';
   static const lastQueueKey = 'last_queue_ids';
   static const playlistsKey = 'playlists';
-  static const waveStyleKey = 'wave_style';
+
+  /// Retired in vc46. Cleared on save so an old 镜像柱 / 柔光柱 choice cannot linger.
+  static const retiredWaveStyleKey = 'wave_style';
 
   final SharedPreferences _prefs;
 
@@ -88,7 +87,6 @@ class SettingsStore {
       lastPositionMs: _prefs.getInt(lastPositionKey) ?? 0,
       lastQueueIds: _decodeQueue(_prefs.getString(lastQueueKey)),
       playlists: PlaylistLibrary.parse(_prefs.getString(playlistsKey)),
-      waveStyle: WaveStyle.fromName(_prefs.getString(waveStyleKey)).name,
     );
   }
 
@@ -115,10 +113,7 @@ class SettingsStore {
         playlistsKey,
         PlaylistLibrary.encode(settings.playlists),
       ),
-      _prefs.setString(
-        waveStyleKey,
-        WaveStyle.fromName(settings.waveStyle).name,
-      ),
+      _prefs.remove(retiredWaveStyleKey),
     ];
     if (settings.volume != null) {
       writes.add(_prefs.setDouble(volumeKey, settings.volume!.clamp(0.0, 1.0)));

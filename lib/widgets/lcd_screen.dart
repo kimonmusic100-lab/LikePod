@@ -697,7 +697,6 @@ class _LcdScreenState extends State<LcdScreen> {
                             right: 2,
                             bottom: waveBottom,
                             child: NowPlayingWave(
-                              style: pod.waveStyle,
                               color: widget.theme.lcdText,
                             ),
                           ),

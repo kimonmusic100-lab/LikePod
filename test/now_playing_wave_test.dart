@@ -7,7 +7,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:likepod/main.dart';
 import 'package:likepod/providers/pod_state.dart';
 import 'package:likepod/services/spectrum_feed.dart';
-import 'package:likepod/services/wave_style.dart';
 import 'package:likepod/widgets/lcd_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -15,12 +14,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('Now Playing draws each waveform and remembers the choice', (
-    tester,
-  ) async {
+  testWidgets('Now Playing draws only the dot columns', (tester) async {
     SharedPreferences.setMockInitialValues({
       'sound_enabled': false,
       'haptics_enabled': false,
+      'wave_style': 'glow',
     });
     tester.view.physicalSize = const Size(800, 1600);
     tester.view.devicePixelRatio = 1.0;
@@ -60,43 +58,20 @@ void main() {
       0.44,
       0.6,
     ]);
-    expect(pod.waveStyle, WaveStyle.mirror);
-    expect(
-      find.byKey(const ValueKey('now_playing_wave_mirror')),
-      findsOneWidget,
-    );
-    for (final style in WaveStyle.values) {
-      pod.setWaveStyle(style);
-      await tester.pump();
-      expect(pod.waveStyle, style);
-      expect(
-        find.byKey(ValueKey('now_playing_wave_${style.name}')),
-        findsOneWidget,
-      );
-      await _saveShot(tester, 'now-playing-wave-${style.name}-vc44.png');
-    }
+    await tester.pump();
+    expect(find.byKey(const ValueKey('now_playing_wave')), findsOneWidget);
+    expect(find.text('镜像柱'), findsNothing);
+    expect(find.text('柔光柱'), findsNothing);
+    expect(find.text('点阵柱'), findsNothing);
+    expect(find.text('波形特效'), findsNothing);
+    await _saveShot(tester, 'now-playing-wave-dots-vc46.png');
 
     await tester.longPress(find.byKey(const Key('click_wheel_center')));
     await tester.pump();
-    expect(pod.currentScreen.id, 'wave_style');
-    expect(pod.currentScreen.title, '波形特效');
-    expect(find.text('镜像柱'), findsOneWidget);
-    expect(find.text('点阵柱'), findsOneWidget);
-    expect(find.text('柔光柱'), findsOneWidget);
-    expect(find.text('经典柱状'), findsNothing);
-    expect(find.text('示波曲线'), findsNothing);
-    expect(find.text('当前'), findsWidgets);
-    await _saveShot(tester, 'now-playing-wave-menu-vc44.png');
-
-    pod.setSelectedIndex(WaveStyle.dots.index);
-    pod.onSelect();
-    await tester.pump();
-    expect(pod.waveStyle, WaveStyle.dots);
-
-    pod.onMenu();
-    await tester.pump();
     expect(pod.currentScreen.id, 'now_playing_view');
-    expect(find.byKey(const ValueKey('now_playing_wave_dots')), findsOneWidget);
+    expect(find.text('波形特效'), findsNothing);
+    expect(find.text('镜像柱'), findsNothing);
+    expect(find.text('柔光柱'), findsNothing);
 
     pod.onMenu();
     await tester.pump();
@@ -105,22 +80,15 @@ void main() {
     pod.onSelect();
     await tester.pump();
     expect(pod.currentScreen.id, 'settings');
-    expect(find.text('波形特效'), findsOneWidget);
-    expect(find.text('点阵柱'), findsOneWidget);
-    expect(find.text('经典柱状'), findsNothing);
-
-    pod.setSelectedIndex(3);
-    pod.onSelect();
-    await tester.pump();
-    expect(pod.currentScreen.id, 'wave_style');
-    pod.setSelectedIndex(WaveStyle.glow.index);
-    pod.onSelect();
-    await tester.pump();
-    expect(pod.waveStyle, WaveStyle.glow);
+    expect(find.text('波形特效'), findsNothing);
+    expect(find.text('镜像柱'), findsNothing);
+    expect(find.text('点阵柱'), findsNothing);
+    expect(find.text('柔光柱'), findsNothing);
+    expect(find.text('触感反馈'), findsOneWidget);
 
     await tester.runAsync(() => pod.flushSettings());
     final prefs = await tester.runAsync(() => SharedPreferences.getInstance());
-    expect(prefs!.getString('wave_style'), 'glow');
+    expect(prefs!.getString('wave_style'), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 50));

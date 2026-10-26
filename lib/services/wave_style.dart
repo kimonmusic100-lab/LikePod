@@ -1,23 +1,5 @@
-/// Now Playing waveform. Only the three styles the user kept.
-enum WaveStyle {
-  mirror('镜像柱'),
-  dots('点阵柱'),
-  glow('柔光柱');
-
-  const WaveStyle(this.label);
-
-  final String label;
-
-  /// Fresh installs, and any retired style name, open on the mirrored bars.
-  static const fallback = WaveStyle.mirror;
-
-  static WaveStyle fromName(String? name) {
-    for (final style in WaveStyle.values) {
-      if (style.name == name) return style;
-    }
-    return fallback;
-  }
-}
+// Band count and easing for the Now Playing dot columns.
+// The visualizer is only 点阵柱. There is no style picker.
 
 /// Bands delivered by the playback visualizer.
 const int spectrumBandCount = 24;

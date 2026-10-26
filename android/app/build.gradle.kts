@@ -26,14 +26,39 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
+            // Flutter's Gradle plugin also turns these on for release.
+            // Kept here so a later plugin change cannot ship an unshrunk APK.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            isJniDebuggable = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            ndk {
+                debugSymbolLevel = "NONE"
+            }
         }
+    }
+
+    packaging {
+        jniLibs {
+            // Compress libflutter.so / libapp.so inside the APK. resources.arsc
+            // stays stored (aapt default) so install does not reject the package.
+            useLegacyPackaging = true
+        }
+        exclude("DebugProbesKt.bin")
+        exclude("kotlin-tooling-metadata.json")
+        exclude("META-INF/version-control-info.textproto")
     }
 }
 
