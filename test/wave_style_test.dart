@@ -20,6 +20,28 @@ void main() {
     expect(spectrumLooksLive(hit), isTrue);
   });
 
+  test('quieter musical bands rise and silence stays empty', () {
+    final bassOnly = List<double>.filled(spectrumBandCount, 0);
+    bassOnly[1] = 1;
+    final bass = evenOutSpectrum(bassOnly);
+    expect(bass[1], closeTo(1, 0.001));
+    expect(bass.where((level) => level > 0), hasLength(1));
+
+    final sloped = List<double>.generate(spectrumBandCount, (i) {
+      if (i >= 18) return 0.0;
+      return 1 - i / 28;
+    });
+    final even = evenOutSpectrum(sloped);
+    expect(even[0], greaterThan(0.95));
+    expect(even[12], greaterThan(sloped[12]));
+    expect(even[12], lessThan(even[0]));
+    expect(even[20], 0);
+    expect(even[23], 0);
+    for (var i = 1; i < 18; i++) {
+      expect(even[i], lessThanOrEqualTo(even[i - 1] + 1e-9));
+    }
+  });
+
   test('spectrum easing rises faster than it falls', () {
     final quiet = List<double>.filled(spectrumBandCount, 0);
     final hit = List<double>.filled(spectrumBandCount, 0);

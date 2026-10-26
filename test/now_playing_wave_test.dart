@@ -73,6 +73,37 @@ void main() {
     expect(find.text('波形特效'), findsNothing);
     await _saveShot(tester, 'now-playing-wave-dots-vc47.png');
 
+    // Log-banded pop frame after the mild per-band lift: bass on the left,
+    // vocal columns through the middle, hats toward the right.
+    SpectrumFeed.instance.debugSetLevels(const [
+      0.83,
+      0.83,
+      1.00,
+      1.00,
+      1.00,
+      0.73,
+      0.62,
+      0.62,
+      0.53,
+      0.49,
+      0.44,
+      0.59,
+      0.36,
+      0.61,
+      0.26,
+      0.21,
+      0.44,
+      0.00,
+      0.24,
+      0.00,
+      0.24,
+      0.00,
+      0.34,
+      0.00,
+    ]);
+    await tester.pump();
+    await _saveShot(tester, 'now-playing-wave-balance-vc50.png');
+
     await tester.longPress(find.byKey(const Key('click_wheel_center')));
     await tester.pump();
     expect(pod.currentScreen.id, 'now_playing_view');

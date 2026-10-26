@@ -13,9 +13,12 @@ import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.ln
 import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.pow
 
 /**
  * FFT of the playing track. The player's own session is tried first. Session 0
@@ -36,6 +39,7 @@ class TrackSpectrum(
     private var lastSendMs = 0L
     private var lastLogMs = 0L
     private var sawEnergy = false
+    private var sampleRateMilliHz = 44_100_000
 
     private val poll = object : Runnable {
         override fun run() {
@@ -104,6 +108,8 @@ class TrackSpectrum(
             val effect = Visualizer(sessionId)
             val range = Visualizer.getCaptureSizeRange()
             effect.captureSize = range[1]
+            val reportedRate = Visualizer.getSamplingRate()
+            if (reportedRate > 0) sampleRateMilliHz = reportedRate
             val rate = max(1000, Visualizer.getMaxCaptureRate() / 2)
             effect.setDataCaptureListener(
                 object : Visualizer.OnDataCaptureListener {
@@ -120,7 +126,8 @@ class TrackSpectrum(
                         samplingRate: Int,
                     ) {
                         lastCallbackMs = SystemClock.uptimeMillis()
-                        val bands = bandsFromFft(fft)
+                        if (samplingRate > 0) sampleRateMilliHz = samplingRate
+                        val bands = bandsFromFft(fft, sampleRateMilliHz)
                         if (peak(bands) > 0.04) publish(bands, "fft")
                     }
                 },
@@ -178,7 +185,7 @@ class TrackSpectrum(
             val wave = ByteArray(effect.captureSize)
             val fftStatus = effect.getFft(fft)
             if (fftStatus == Visualizer.SUCCESS) {
-                val bands = bandsFromFft(fft)
+                val bands = bandsFromFft(fft, sampleRateMilliHz)
                 if (peak(bands) > 0.04) {
                     publish(bands, source)
                     return
@@ -260,34 +267,62 @@ class TrackSpectrum(
             return best
         }
 
-        fun bandsFromFft(fft: ByteArray): List<Double> {
-            val bins = fft.size / 2
-            if (bins < 4) return List(BANDS) { 0.0 }
-            val magnitudes = FloatArray(bins)
-            for (i in 0 until bins) {
-                val real = fft[i * 2].toInt().toFloat()
-                val imag = if (i * 2 + 1 < fft.size) fft[i * 2 + 1].toInt().toFloat() else 0f
-                val mag = hypot(real, imag)
-                val raw = (mag / 28f).coerceIn(0f, 1f)
-                val db = 20.0 * ln((mag / 128.0) + 1e-4) / ln(10.0)
-                val curved = ((db + 52.0) / 52.0).toFloat().coerceIn(0f, 1f)
-                magnitudes[i] = max(raw, curved)
-            }
+        /**
+         * Equal slices of the FFT put bass and vocals in the left columns.
+         * These bands are equal steps on a log frequency axis from 50 Hz to
+         * 14 kHz, which is where pop music actually has energy.
+         * [sampleRate] is millihertz, as Visualizer reports it.
+         */
+        fun bandsFromFft(fft: ByteArray, sampleRate: Int = 44_100_000): List<Double> {
+            val n = fft.size
+            if (n < 16) return List(BANDS) { 0.0 }
+            val sampleRateHz = captureSampleRateHz(sampleRate)
+            val binHz = sampleRateHz.toDouble() / n.toDouble()
+            val maxBin = n / 2 - 1
+            if (maxBin < 2 || binHz <= 0.0) return List(BANDS) { 0.0 }
+            val fMin = 50.0
+            val fMax = min(14_000.0, sampleRateHz * 0.45)
+            if (fMax <= fMin * 1.5) return List(BANDS) { 0.0 }
             val out = ArrayList<Double>(BANDS)
-            val usable = max(2, bins - 2)
             for (band in 0 until BANDS) {
-                val start = 2 + band * usable / BANDS
-                val end = 2 + (band + 1) * usable / BANDS
+                val f0 = fMin * (fMax / fMin).pow(band.toDouble() / BANDS)
+                val f1 = fMin * (fMax / fMin).pow((band + 1).toDouble() / BANDS)
+                val k0 = (f0 / binHz).toInt().coerceIn(1, maxBin)
+                val k1 = (ceil(f1 / binHz).toInt() - 1).coerceIn(k0, maxBin)
                 var high = 0f
-                var i = start
-                val limit = max(start + 1, end)
-                while (i < limit && i < bins) {
-                    if (magnitudes[i] > high) high = magnitudes[i]
-                    i++
+                var k = k0
+                while (k <= k1) {
+                    val level = magnitudeLevel(binMagnitude(fft, k))
+                    if (level > high) high = level
+                    k++
                 }
                 out.add(high.toDouble())
             }
             return out
+        }
+
+        fun captureSampleRateHz(rate: Int): Int {
+            if (rate >= 100_000) return rate / 1000
+            if (rate in 8_000..96_000) return rate
+            return 44_100
+        }
+
+        /** Android FFT: bin k lives at the real/imag pair 2k, 2k+1. */
+        fun binMagnitude(fft: ByteArray, bin: Int): Float {
+            val realIndex = bin * 2
+            val imagIndex = realIndex + 1
+            if (bin < 1 || imagIndex >= fft.size) return 0f
+            return hypot(
+                fft[realIndex].toInt().toFloat(),
+                fft[imagIndex].toInt().toFloat(),
+            )
+        }
+
+        fun magnitudeLevel(mag: Float): Float {
+            val raw = (mag / 28f).coerceIn(0f, 1f)
+            val db = 20.0 * ln((mag / 128.0) + 1e-4) / ln(10.0)
+            val curved = ((db + 52.0) / 52.0).toFloat().coerceIn(0f, 1f)
+            return max(raw, curved)
         }
 
         fun bandsFromWaveform(wave: ByteArray): List<Double> {
