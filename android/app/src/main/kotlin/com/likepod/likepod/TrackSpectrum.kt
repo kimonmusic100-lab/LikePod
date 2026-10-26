@@ -108,8 +108,6 @@ class TrackSpectrum(
             val effect = Visualizer(sessionId)
             val range = Visualizer.getCaptureSizeRange()
             effect.captureSize = range[1]
-            val reportedRate = Visualizer.getSamplingRate()
-            if (reportedRate > 0) sampleRateMilliHz = reportedRate
             val rate = max(1000, Visualizer.getMaxCaptureRate() / 2)
             effect.setDataCaptureListener(
                 object : Visualizer.OnDataCaptureListener {
@@ -136,6 +134,8 @@ class TrackSpectrum(
                 true,
             )
             effect.enabled = true
+            val reportedRate = effect.samplingRate
+            if (reportedRate > 0) sampleRateMilliHz = reportedRate
             if (!effect.enabled) {
                 effect.release()
                 Log.i(TAG, "wave attach sessionId=$sessionId fail not-enabled")
