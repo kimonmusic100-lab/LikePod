@@ -103,12 +103,59 @@ void main() {
     expect(snapshot.currentOutputLine, contains('位深未报告'));
   });
 
-  test('only the bluetooth route draws a status mark', () {
+  test('speaker, wired, and USB labels are not a bluetooth route', () {
     expect(isBluetoothRoute('扬声器'), isFalse);
     expect(isBluetoothRoute('有线耳机'), isFalse);
     expect(isBluetoothRoute('USB · DAC'), isFalse);
     expect(isBluetoothRoute('U'), isFalse);
     expect(isBluetoothRoute('蓝牙'), isTrue);
+  });
+
+  test('a connected bluetooth sink shows even when another route is active', () {
+    expect(kindFromAndroidType(androidTypeBluetoothA2dp), AudioSinkKind.bluetooth);
+    expect(kindFromAndroidType(androidTypeBluetoothSco), AudioSinkKind.bluetooth);
+    expect(kindFromAndroidType(androidTypeHearingAid), AudioSinkKind.bluetooth);
+    expect(kindFromAndroidType(androidTypeBleHeadset), AudioSinkKind.bluetooth);
+    expect(kindFromAndroidType(androidTypeBleSpeaker), AudioSinkKind.bluetooth);
+    expect(kindFromAndroidType(androidTypeBleBroadcast), AudioSinkKind.bluetooth);
+
+    final paired = describeRoute(
+      sinks: [
+        _sink(id: 1, kind: AudioSinkKind.speaker, routed: true),
+        _sink(id: 8, kind: AudioSinkKind.bluetooth, name: 'WH-1000XM5'),
+      ],
+      outputSampleRate: 44100,
+    );
+    expect(paired.route, '扬声器');
+    expect(paired.bluetoothConnected, isTrue);
+    expect(paired.usbRouted, isFalse);
+
+    final playingBt = describeRoute(
+      sinks: [
+        _sink(id: 1, kind: AudioSinkKind.speaker),
+        _sink(id: 8, kind: AudioSinkKind.bluetooth, routed: true),
+      ],
+      outputSampleRate: 44100,
+    );
+    expect(playingBt.route, '蓝牙');
+    expect(playingBt.bluetoothConnected, isTrue);
+
+    for (final sinks in [
+      [_sink(id: 1, kind: AudioSinkKind.speaker, routed: true)],
+      [_sink(id: 3, kind: AudioSinkKind.wired, routed: true)],
+      [
+        _sink(
+          id: 7,
+          kind: AudioSinkKind.usbDevice,
+          name: 'FiiO',
+          routed: true,
+        ),
+      ],
+    ]) {
+      final snapshot = describeRoute(sinks: sinks, outputSampleRate: 48000);
+      expect(snapshot.bluetoothConnected, isFalse);
+      expect(snapshot.route, isNot('U'));
+    }
   });
 }
 

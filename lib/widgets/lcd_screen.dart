@@ -9,7 +9,6 @@ import 'package:provider/provider.dart';
 import '../models/album_model.dart';
 import '../models/menu_item.dart';
 import '../providers/pod_state.dart';
-import '../services/output_probe.dart';
 import '../theme/classic_glass.dart';
 import '../theme/pod_theme.dart';
 import 'bluetooth_mark.dart';
@@ -30,7 +29,10 @@ class _LcdScreenState extends State<LcdScreen> {
   String? _trackedScreenId;
   int? _anchoredIndex;
 
-  static const double _menuRowHeight = 32;
+  /// Single-line Classic menus (home and nested). Title was 12.5sp inside
+  /// a 32px highlight; both grow by the same ratio so the bar stays tight.
+  static const double _menuTitleSize = 13.5;
+  static const double _menuRowHeight = 32 * _menuTitleSize / 12.5;
   static const double _songRowHeight = 58;
   static const double _meterSideSlot = 42;
   static const double _meterLabelGap = 4;
@@ -207,10 +209,8 @@ class _LcdScreenState extends State<LcdScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                if (isBluetoothRoute(pod.outputSnapshot.route)) ...[
-                  _engravedGlyph(
-                    BluetoothMark(color: widget.theme.lcdHeaderText),
-                  ),
+                if (pod.outputSnapshot.bluetoothConnected) ...[
+                  _engravedGlyph(const BluetoothMark()),
                   const SizedBox(width: 5),
                 ],
                 if (pod.hasActivePlayback) ...[
@@ -416,7 +416,7 @@ class _LcdScreenState extends State<LcdScreen> {
               color: isSelected
                   ? ClassicGlass.selectedText
                   : widget.theme.lcdText,
-              fontSize: 12.5,
+              fontSize: _menuTitleSize,
               fontWeight: titleWeight,
               fontFamily: heiti ? 'NotoSansSC' : null,
               fontVariations: heiti ? const [FontVariation('wght', 900)] : null,
@@ -431,7 +431,7 @@ class _LcdScreenState extends State<LcdScreen> {
               color: isSelected
                   ? ClassicGlass.selectedText.withValues(alpha: 0.88)
                   : widget.theme.lcdSubtext,
-              fontSize: 11,
+              fontSize: 12,
             ),
           ),
         ],
@@ -439,7 +439,7 @@ class _LcdScreenState extends State<LcdScreen> {
           const SizedBox(width: 4),
           Icon(
             Icons.chevron_right_rounded,
-            size: 16,
+            size: 17,
             color: isSelected
                 ? ClassicGlass.selectedText
                 : widget.theme.lcdSubtext,

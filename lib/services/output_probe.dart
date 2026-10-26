@@ -20,6 +20,10 @@ class OutputSnapshot {
 
   final String usbName;
 
+  /// An A2DP, SCO, or LE Audio sink is present, whether or not it is the
+  /// route Android is using. Speaker and wired sinks do not set this.
+  final bool bluetoothConnected;
+
   const OutputSnapshot({
     this.sampleRate,
     this.bitDepth,
@@ -29,6 +33,7 @@ class OutputSnapshot {
     this.usbConnected = false,
     this.usbRouted = false,
     this.usbName = '',
+    this.bluetoothConnected = false,
   });
 
   static const unknown = OutputSnapshot();
@@ -59,6 +64,7 @@ class OutputSnapshot {
     bool? usbConnected,
     bool? usbRouted,
     String? usbName,
+    bool? bluetoothConnected,
   }) {
     return OutputSnapshot(
       sampleRate: sampleRate ?? this.sampleRate,
@@ -69,6 +75,7 @@ class OutputSnapshot {
       usbConnected: usbConnected ?? this.usbConnected,
       usbRouted: usbRouted ?? this.usbRouted,
       usbName: usbName ?? this.usbName,
+      bluetoothConnected: bluetoothConnected ?? this.bluetoothConnected,
     );
   }
 }
@@ -83,6 +90,10 @@ const int androidTypeBluetoothA2dp = 8;
 const int androidTypeUsbDevice = 11;
 const int androidTypeUsbAccessory = 12;
 const int androidTypeUsbHeadset = 22;
+const int androidTypeHearingAid = 23;
+const int androidTypeBleHeadset = 26;
+const int androidTypeBleSpeaker = 27;
+const int androidTypeBleBroadcast = 30;
 
 /// [AudioFormat.ENCODING_PCM_16BIT]. just_audio submits this encoding.
 const int androidEncodingPcm16 = 2;
@@ -117,6 +128,10 @@ AudioSinkKind kindFromAndroidType(int type) {
       return AudioSinkKind.wired;
     case androidTypeBluetoothSco:
     case androidTypeBluetoothA2dp:
+    case androidTypeHearingAid:
+    case androidTypeBleHeadset:
+    case androidTypeBleSpeaker:
+    case androidTypeBleBroadcast:
       return AudioSinkKind.bluetooth;
     case androidTypeUsbHeadset:
       return AudioSinkKind.usbHeadset;
@@ -176,10 +191,18 @@ int? systemPathBitDepth(List<int> encodings) {
   return null;
 }
 
-/// True when the current route label is Bluetooth. Speaker, wired, and USB
-/// routes draw no extra status mark.
+/// True when the current route label is Bluetooth. The status glyph uses
+/// [OutputSnapshot.bluetoothConnected] instead, so a paired headset still
+/// shows while the speaker or a wired jack is the routed sink.
 bool isBluetoothRoute(String route) {
   return route == '蓝牙';
+}
+
+bool sinksIncludeBluetooth(List<AudioSink> sinks) {
+  for (final sink in sinks) {
+    if (sink.kind == AudioSinkKind.bluetooth) return true;
+  }
+  return false;
 }
 
 String labelForKind(AudioSinkKind kind) {
@@ -238,6 +261,7 @@ OutputSnapshot describeRoute({
     usbConnected: usb != null,
     usbRouted: showUsb,
     usbName: usb == null ? '' : usbDisplayName(usb),
+    bluetoothConnected: sinksIncludeBluetooth(sinks),
   );
 }
 

@@ -1,29 +1,28 @@
 import 'package:flutter/material.dart';
 
-/// Small Classic-style status mark for Bluetooth output.
-class BluetoothMark extends StatelessWidget {
-  final Color color;
+import '../theme/classic_glass.dart';
 
-  const BluetoothMark({super.key, required this.color});
+/// Small Classic status rune. Stroke uses the same glass as the status
+/// play / pause mark ([ClassicGlass.progressFill]), not Material blue.
+class BluetoothMark extends StatelessWidget {
+  const BluetoothMark({super.key});
 
   @override
   Widget build(BuildContext context) {
     return CustomPaint(
       size: const Size(11, 13),
-      painter: _BluetoothMarkPainter(color),
+      painter: _BluetoothMarkPainter(),
     );
   }
 }
 
 class _BluetoothMarkPainter extends CustomPainter {
-  final Color color;
-
-  _BluetoothMarkPainter(this.color);
-
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = color
+      ..shader = ClassicGlass.progressFill.createShader(
+        Rect.fromLTWH(0, 0, size.width, size.height),
+      )
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.35
       ..strokeCap = StrokeCap.round
@@ -45,7 +44,5 @@ class _BluetoothMarkPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _BluetoothMarkPainter oldDelegate) {
-    return oldDelegate.color != color;
-  }
+  bool shouldRepaint(covariant _BluetoothMarkPainter oldDelegate) => false;
 }
