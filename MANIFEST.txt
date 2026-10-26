@@ -1,0 +1,5 @@
+branch: cursor/persist-background-playback-f40a
+commit: 7b00e02627260f6034e534aa5b4febfa8daf5ffe
+commit date: 2026-10-18 14:35:45 +0000
+archive time (UTC): 2026-10-23 13:33:15 UTC
+note: build outputs, .dart_tool, .idea, Gradle caches, Pods, and APKs are excluded. This archive is a git archive of tracked files at the commit above, plus this manifest.

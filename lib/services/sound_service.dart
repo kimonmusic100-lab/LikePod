@@ -1,71 +1,173 @@
+import 'dart:async';
+
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+/// Wheel ticks and center-button clicks.
+///
+/// Android plays these from a SoundPool that starts a new stream on every
+/// step. A media-player pool only survives one `stop()` and then stays quiet.
+/// While exclusive USB is open, the same tick is also mixed into the DAC
+/// packets, because the system mixer cannot reach a detached USB interface.
 class SoundService {
   static final SoundService _instance = SoundService._internal();
   factory SoundService() => _instance;
   SoundService._internal();
 
-  AudioPlayer? _clickPlayer;
-  bool _isInitialized = false;
+  static const MethodChannel _channel = MethodChannel('com.likepod/media');
 
-  Future<void> init() async {
-    if (_isInitialized) return;
+  /// Same −36 dB linear level as the Android SoundPool click.
+  static const double _clickVolume = 0.016;
+
+  static final AudioContext _mixContext = AudioContext(
+    android: const AudioContextAndroid(
+      contentType: AndroidContentType.sonification,
+      usageType: AndroidUsageType.assistanceSonification,
+      audioFocus: AndroidAudioFocus.none,
+    ),
+  );
+
+  _ClipRing? _ticks;
+  _ClipRing? _selects;
+  Future<void>? _starting;
+
+  Future<void> init() {
+    return _starting ??= _load();
+  }
+
+  Future<void> _load() async {
     try {
-      _clickPlayer = AudioPlayer();
-      await _clickPlayer!.setReleaseMode(ReleaseMode.stop);
-      // Low latency mode for sound effects
-      await _clickPlayer!.setPlayerMode(PlayerMode.lowLatency);
-      await _clickPlayer!.setAudioContext(AudioContext(
-        android: const AudioContextAndroid(
-          isSpeakerphoneOn: false,
-          stayAwake: false,
-          contentType: AndroidContentType.sonification,
-          usageType: AndroidUsageType.assistanceSonification,
-          audioFocus: AndroidAudioFocus.none,
-        ),
-      ));
-      await _clickPlayer!.setSource(AssetSource('audio/click.wav'));
-      _isInitialized = true;
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+        await _channel.invokeMethod<void>('prepareWheelSound');
+      }
+      _ticks = await _ClipRing.load('audio/tick.wav');
+      _selects = await _ClipRing.load('audio/select.wav');
     } catch (e) {
-      // If audio player fails on specific desktop platforms, gracefully fallback
-      _isInitialized = false;
+      debugPrint('Click sounds failed to load: $e');
+      _ticks = null;
+      _selects = null;
+      _starting = null;
     }
   }
 
-  void playClick({bool soundEnabled = true, bool hapticsEnabled = true}) {
-    // 1. Tactile haptic feedback
+  void _fallback(String asset) {
+    final ring = asset == 'select' ? (_selects ?? _ticks) : _ticks;
+    if (ring == null) {
+      init().then((_) {
+        final ready = asset == 'select' ? (_selects ?? _ticks) : _ticks;
+        ready?.play();
+      });
+      return;
+    }
+    ring.play();
+  }
+
+  Future<void> _play(String kind) async {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        final handled = await _channel.invokeMethod<bool>('playWheelSound', {
+          'kind': kind,
+        });
+        if (handled == true) return;
+      } catch (e) {
+        debugPrint('Wheel sound channel failed: $e');
+      }
+    }
+    _fallback(kind);
+  }
+
+  /// Short wheel tick while the click wheel is turning.
+  void playTick({bool soundEnabled = true, bool hapticsEnabled = true}) {
     if (hapticsEnabled) {
       try {
         HapticFeedback.selectionClick();
       } catch (_) {}
     }
-
-    // 2. Audible mechanical click sound
-    if (soundEnabled && _clickPlayer != null) {
-      try {
-        _clickPlayer!.seek(Duration.zero).then((_) {
-          _clickPlayer!.resume();
-        }).catchError((_) {
-          _clickPlayer!.play(AssetSource('audio/click.wav'));
-        });
-      } catch (_) {}
+    if (soundEnabled) {
+      unawaited(_play('tick'));
     }
   }
 
-  void playConfirm({bool soundEnabled = true, bool hapticsEnabled = true}) {
+  /// Center-button click. Stays silent when click sounds are off.
+  void playSelect({bool soundEnabled = true, bool hapticsEnabled = true}) {
     if (hapticsEnabled) {
       try {
         HapticFeedback.mediumImpact();
       } catch (_) {}
     }
-    if (soundEnabled && _clickPlayer != null) {
-      playClick(soundEnabled: soundEnabled, hapticsEnabled: false);
+    if (soundEnabled) {
+      unawaited(_play('select'));
     }
   }
 
   void dispose() {
-    _clickPlayer?.dispose();
-    _isInitialized = false;
+    _ticks?.dispose();
+    _selects?.dispose();
+    _ticks = null;
+    _selects = null;
+    _starting = null;
+  }
+}
+
+/// A few prepared players. Completion stops the native player, so each clip
+/// is loaded again and is ready for the next step.
+class _ClipRing {
+  _ClipRing._(this._asset);
+
+  final String _asset;
+  final List<AudioPlayer> _players = [];
+  int _next = 0;
+
+  static Future<_ClipRing> load(String asset) async {
+    final ring = _ClipRing._(asset);
+    for (var i = 0; i < 4; i++) {
+      ring._players.add(await ring._create());
+    }
+    return ring;
+  }
+
+  Future<AudioPlayer> _create() async {
+    final player = AudioPlayer();
+    await player.setAudioContext(SoundService._mixContext);
+    await player.setPlayerMode(PlayerMode.mediaPlayer);
+    await player.setReleaseMode(ReleaseMode.stop);
+    await player.setSource(AssetSource(_asset));
+    player.onPlayerComplete.listen((_) {
+      unawaited(_reload(player));
+    });
+    return player;
+  }
+
+  Future<void> _reload(AudioPlayer player) async {
+    try {
+      await player.setSource(AssetSource(_asset));
+    } catch (e) {
+      debugPrint('Click sound reload failed: $e');
+    }
+  }
+
+  void play() {
+    if (_players.isEmpty) return;
+    final player = _players[_next];
+    _next = (_next + 1) % _players.length;
+    unawaited(_retrigger(player));
+  }
+
+  Future<void> _retrigger(AudioPlayer player) async {
+    try {
+      await player.seek(Duration.zero);
+      await player.setVolume(SoundService._clickVolume);
+      await player.resume();
+    } catch (e) {
+      debugPrint('Click sound failed: $e');
+    }
+  }
+
+  void dispose() {
+    for (final player in _players) {
+      player.dispose();
+    }
+    _players.clear();
   }
 }

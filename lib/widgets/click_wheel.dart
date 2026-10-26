@@ -1,5 +1,7 @@
 import 'dart:math';
+
 import 'package:flutter/material.dart';
+
 import '../theme/pod_theme.dart';
 
 class ClickWheel extends StatefulWidget {
@@ -11,6 +13,10 @@ class ClickWheel extends StatefulWidget {
   final VoidCallback onPrevious;
   final VoidCallback onNext;
 
+  /// Fired when the center dot is pressed and held. Opens the quality-mode
+  /// picker.
+  final VoidCallback onCenterLongPress;
+
   const ClickWheel({
     super.key,
     required this.theme,
@@ -20,6 +26,7 @@ class ClickWheel extends StatefulWidget {
     required this.onPlayPause,
     required this.onPrevious,
     required this.onNext,
+    required this.onCenterLongPress,
   });
 
   @override
@@ -29,7 +36,11 @@ class ClickWheel extends StatefulWidget {
 class _ClickWheelState extends State<ClickWheel> {
   double? _lastAngle;
   double _accumulatedAngle = 0.0;
-  static const double _stepThreshold = 0.28; // ~16 degrees per tick
+  static const double _stepThreshold =
+      0.52; // ~30 degrees per tick; less twitchy
+
+  /// Classic center button, a little larger than the previous 28% dot.
+  static const double _centerFraction = 0.32;
 
   bool _isCenterPressed = false;
   bool _isMenuPressed = false;
@@ -53,7 +64,7 @@ class _ClickWheelState extends State<ClickWheel> {
       builder: (context, constraints) {
         final diameter = min(constraints.maxWidth, constraints.maxHeight);
         final wheelRadius = diameter / 2;
-        final centerRadius = (diameter * 0.28) / 2;
+        final centerRadius = (diameter * _centerFraction) / 2;
 
         return Center(
           child: SizedBox(
@@ -62,10 +73,16 @@ class _ClickWheelState extends State<ClickWheel> {
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onPanStart: (details) {
-                final dist = _getDistance(details.localPosition, Size(diameter, diameter));
+                final dist = _getDistance(
+                  details.localPosition,
+                  Size(diameter, diameter),
+                );
                 // Only track rotation on the outer ring
                 if (dist >= centerRadius && dist <= wheelRadius) {
-                  _lastAngle = _getAngle(details.localPosition, Size(diameter, diameter));
+                  _lastAngle = _getAngle(
+                    details.localPosition,
+                    Size(diameter, diameter),
+                  );
                   _accumulatedAngle = 0.0;
                 } else {
                   _lastAngle = null;
@@ -73,13 +90,19 @@ class _ClickWheelState extends State<ClickWheel> {
               },
               onPanUpdate: (details) {
                 if (_lastAngle == null) return;
-                final dist = _getDistance(details.localPosition, Size(diameter, diameter));
+                final dist = _getDistance(
+                  details.localPosition,
+                  Size(diameter, diameter),
+                );
                 if (dist < centerRadius * 0.7 || dist > wheelRadius * 1.2) {
                   _lastAngle = null;
                   return;
                 }
 
-                final currentAngle = _getAngle(details.localPosition, Size(diameter, diameter));
+                final currentAngle = _getAngle(
+                  details.localPosition,
+                  Size(diameter, diameter),
+                );
                 var delta = currentAngle - _lastAngle!;
 
                 // Wrap-around handling across -pi and +pi boundary
@@ -109,7 +132,6 @@ class _ClickWheelState extends State<ClickWheel> {
               child: Stack(
                 alignment: Alignment.center,
                 children: [
-                  // 1. Outer Wheel Ring
                   Container(
                     width: diameter,
                     height: diameter,
@@ -143,45 +165,55 @@ class _ClickWheelState extends State<ClickWheel> {
                     ),
                   ),
 
-                  // 2. Button Labels around the ring
-                  // MENU (Top)
                   Positioned(
                     top: diameter * 0.075,
                     child: _buildWheelButton(
                       label: 'MENU',
                       isPressed: _isMenuPressed,
                       onTap: widget.onMenu,
-                      fontSize: diameter * 0.064,
+                      fontSize: diameter * 0.064 - 0.5,
                       isBold: true,
                     ),
                   ),
 
-                  // PREVIOUS / REWIND (Left)
                   Positioned(
-                    left: diameter * 0.075,
+                    left: diameter * 0.06,
                     child: _buildWheelIconButton(
-                      icon: Icons.fast_rewind_rounded,
+                      side: _WheelSide.previous,
+                      mark: _ClassicSkipMark(
+                        forward: false,
+                        size: diameter * 0.072,
+                        color: widget.theme.wheelText.withValues(
+                          alpha: _isPrevPressed ? 0.6 : 1.0,
+                        ),
+                      ),
                       isPressed: _isPrevPressed,
                       onTap: widget.onPrevious,
-                      size: diameter * 0.098,
+                      size: diameter * 0.072,
                     ),
                   ),
 
-                  // NEXT / FAST FORWARD (Right)
                   Positioned(
-                    right: diameter * 0.075,
+                    right: diameter * 0.06,
                     child: _buildWheelIconButton(
-                      icon: Icons.fast_forward_rounded,
+                      side: _WheelSide.next,
+                      mark: _ClassicSkipMark(
+                        forward: true,
+                        size: diameter * 0.072,
+                        color: widget.theme.wheelText.withValues(
+                          alpha: _isNextPressed ? 0.6 : 1.0,
+                        ),
+                      ),
                       isPressed: _isNextPressed,
                       onTap: widget.onNext,
-                      size: diameter * 0.098,
+                      size: diameter * 0.072,
                     ),
                   ),
 
-                  // PLAY / PAUSE (Bottom)
                   Positioned(
                     bottom: diameter * 0.075,
                     child: _buildWheelIconButton(
+                      side: _WheelSide.play,
                       icon: Icons.play_arrow_rounded,
                       secondaryIcon: Icons.pause_rounded,
                       isPressed: _isPlayPressed,
@@ -190,18 +222,21 @@ class _ClickWheelState extends State<ClickWheel> {
                     ),
                   ),
 
-                  // 3. Center Select Button (Refined authentic proportion)
                   GestureDetector(
                     onTapDown: (_) => setState(() => _isCenterPressed = true),
                     onTapUp: (_) {
                       setState(() => _isCenterPressed = false);
                       widget.onSelect();
                     },
+                    onLongPress: () {
+                      setState(() => _isCenterPressed = false);
+                      widget.onCenterLongPress();
+                    },
                     onTapCancel: () => setState(() => _isCenterPressed = false),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 80),
-                      width: diameter * 0.28,
-                      height: diameter * 0.28,
+                      width: diameter * _centerFraction,
+                      height: diameter * _centerFraction,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: _isCenterPressed
@@ -217,7 +252,7 @@ class _ClickWheelState extends State<ClickWheel> {
                                   color: Colors.black.withValues(alpha: 0.2),
                                   blurRadius: 2,
                                   offset: const Offset(0, 1),
-                                )
+                                ),
                               ]
                             : [
                                 BoxShadow(
@@ -272,7 +307,9 @@ class _ClickWheelState extends State<ClickWheel> {
             fontSize: fontSize,
             fontWeight: isBold ? FontWeight.w900 : FontWeight.w700,
             letterSpacing: 1.6,
-            color: widget.theme.wheelText.withValues(alpha: _isMenuPressed ? 0.6 : 1.0),
+            color: widget.theme.wheelText.withValues(
+              alpha: _isMenuPressed ? 0.6 : 1.0,
+            ),
           ),
         ),
       ),
@@ -280,7 +317,9 @@ class _ClickWheelState extends State<ClickWheel> {
   }
 
   Widget _buildWheelIconButton({
-    required IconData icon,
+    required _WheelSide side,
+    IconData? icon,
+    Widget? mark,
     IconData? secondaryIcon,
     required bool isPressed,
     required VoidCallback onTap,
@@ -289,9 +328,11 @@ class _ClickWheelState extends State<ClickWheel> {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTapDown: (_) {
-        if (icon == Icons.fast_rewind_rounded) setState(() => _isPrevPressed = true);
-        if (icon == Icons.fast_forward_rounded) setState(() => _isNextPressed = true);
-        if (icon == Icons.play_arrow_rounded) setState(() => _isPlayPressed = true);
+        setState(() {
+          if (side == _WheelSide.previous) _isPrevPressed = true;
+          if (side == _WheelSide.next) _isNextPressed = true;
+          if (side == _WheelSide.play) _isPlayPressed = true;
+        });
       },
       onTapUp: (_) {
         setState(() {
@@ -313,22 +354,118 @@ class _ClickWheelState extends State<ClickWheel> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              icon,
-              size: size,
-              color: widget.theme.wheelText.withValues(alpha: isPressed ? 0.6 : 1.0),
-            ),
+            if (mark != null)
+              mark
+            else
+              Icon(
+                icon!,
+                size: size,
+                color: widget.theme.wheelText.withValues(
+                  alpha: isPressed ? 0.6 : 1.0,
+                ),
+              ),
             if (secondaryIcon != null) ...[
               const SizedBox(width: 2),
               Icon(
                 secondaryIcon,
                 size: size * 0.82,
-                color: widget.theme.wheelText.withValues(alpha: isPressed ? 0.6 : 1.0),
+                color: widget.theme.wheelText.withValues(
+                  alpha: isPressed ? 0.6 : 1.0,
+                ),
               ),
             ],
           ],
         ),
       ),
     );
+  }
+}
+
+enum _WheelSide { previous, next, play }
+
+/// Classic click-wheel skip mark: two triangles and one end bar.
+/// Previous is |◀◀, next is ▶▶|.
+class _ClassicSkipMark extends StatelessWidget {
+  final bool forward;
+  final double size;
+  final Color color;
+
+  const _ClassicSkipMark({
+    required this.forward,
+    required this.size,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final triW = size * 0.52;
+    final width = triW * 1.62 + size * 0.14 + size * 0.13;
+    return CustomPaint(
+      size: Size(width, size),
+      painter: _ClassicSkipPainter(forward: forward, color: color),
+    );
+  }
+}
+
+class _ClassicSkipPainter extends CustomPainter {
+  final bool forward;
+  final Color color;
+
+  const _ClassicSkipPainter({required this.forward, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final h = size.height;
+    final triW = h * 0.52;
+    final step = triW * 0.62;
+    final gap = h * 0.14;
+    final barW = h * 0.13;
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+
+    Path triangle(double left, bool pointRight) {
+      final top = h * 0.08;
+      final bottom = h * 0.92;
+      final midY = h * 0.5;
+      if (pointRight) {
+        return Path()
+          ..moveTo(left, top)
+          ..lineTo(left + triW, midY)
+          ..lineTo(left, bottom)
+          ..close();
+      }
+      return Path()
+        ..moveTo(left + triW, top)
+        ..lineTo(left, midY)
+        ..lineTo(left + triW, bottom)
+        ..close();
+    }
+
+    void bar(double left) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(left, h * 0.08, barW, h * 0.84),
+          Radius.circular(barW / 2),
+        ),
+        paint,
+      );
+    }
+
+    if (forward) {
+      canvas.drawPath(triangle(0, true), paint);
+      canvas.drawPath(triangle(step, true), paint);
+      bar(step + triW + gap);
+    } else {
+      bar(0);
+      final start = barW + gap;
+      canvas.drawPath(triangle(start, false), paint);
+      canvas.drawPath(triangle(start + step, false), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ClassicSkipPainter oldDelegate) {
+    return oldDelegate.forward != forward || oldDelegate.color != color;
   }
 }

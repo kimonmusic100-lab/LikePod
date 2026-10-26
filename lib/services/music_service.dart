@@ -1,32 +1,62 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
-import 'package:audio_session/audio_session.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:permission_handler/permission_handler.dart';
+
 import '../models/song_model.dart';
+import 'audio_engine.dart';
+import 'focus_route.dart';
+import 'output_probe.dart';
 
-enum PodShuffleMode {
-  off,
-  songs,
-}
+enum PodShuffleMode { off, songs }
 
-enum PodRepeatMode {
-  off,
-  all,
-  one,
-}
+enum PodRepeatMode { off, all, one }
 
 class MusicService {
   static final MusicService _instance = MusicService._internal();
   factory MusicService() => _instance;
-  MusicService._internal();
+  MusicService._internal() {
+    _engine.onAppliedGain = (ui) {
+      _volume = ui;
+    };
+    _engine.onFocusGained = _onFocusGained;
+    _engine.onFocusLost = _onNativeFocusLost;
+    _engine.onDirectDied = _onDirectDied;
+  }
 
   static const MethodChannel _channel = MethodChannel('com.likepod/media');
-  final AudioPlayer _player = AudioPlayer();
+  final AudioEngine _engine = AudioEngine();
+  bool _askedNotificationPermission = false;
+  bool _anchorHooked = false;
+  bool _intendPlay = false;
+  bool _inBackground = false;
+  int _directKeeps = 0;
+  DateTime? _nextDirectKeep;
+
+  /// The native yield paused ExoPlayer directly (fast DAC handoff), which
+  /// bypasses just_audio. Mirror the pause through just_audio so its Dart
+  /// state matches: otherwise play() later is swallowed as a no-op while
+  /// "playing", and the auto-resumed player stays silent while the UI and
+  /// the notification report playing.
+  void _onNativeFocusLost() {
+    _engine.player?.pause();
+  }
+
+  /// Fired when the direct stream dies while the player still wants to
+  /// play (freeze stall). Three quick sync attempts re-open it without
+  /// waiting for the next route event.
+  void _onDirectDied() {
+    if (_intendPlay) {
+      _engine.retryDirectAfterDeath();
+    }
+  }
 
   final Map<int, Uint8List?> _artworkCache = {};
+
   /// Windows/desktop: albumId -> sidecar cover file path.
   final Map<int, String> _albumArtPaths = {};
   List<SongModel> _allSongs = [];
@@ -36,11 +66,219 @@ class MusicService {
   PodShuffleMode _shuffleMode = PodShuffleMode.off;
   PodRepeatMode _repeatMode = PodRepeatMode.all;
 
+  /// Folders the user added manually. The library is a strict whitelist:
+  /// nothing is scanned while this is empty.
+  List<String> _musicFolders = const [];
+
+  /// Every song file path from the last raw MediaStore scan, unfiltered.
+  final List<String> _rawPaths = [];
+
+  /// Every directory that leads to at least one song, plus volume roots.
+  final Set<String> _allDirs = {};
+
   double _volume = 0.7;
   bool _isInitialized = false;
 
-  AudioPlayer get player => _player;
+  bool get hasPlayer => _engine.hasPlayer;
+
+  OutputSnapshot get outputSnapshot => _engine.snapshot;
+
+  set onOutputChanged(void Function()? listener) {
+    _engine.onSnapshot = listener;
+  }
+
+  /// Creates the shared [AudioPlayer] once. Returns false when the platform
+  /// player cannot be constructed (widget tests without a plugin, for example).
+  bool ensurePlayer() {
+    final ok = _engine.ensurePlayer();
+    final player = _engine.player;
+    if (ok && player != null && !_anchorHooked) {
+      _anchorHooked = true;
+      player.playingStream.listen((playing) {
+        unawaited(anchorPlayback(playing));
+        if (!playing && _intendPlay && _inBackground) {
+          unawaited(_keepDirectIfFocused());
+        }
+      });
+    }
+    return ok;
+  }
+
+  /// The activity has left the screen. Direct USB stays claimed while this
+  /// process still holds focus.
+  void setInBackground(bool background) {
+    _inBackground = background;
+    if (!background) _directKeeps = 0;
+  }
+
+  /// A pause while we still hold focus is not another app. Start the direct
+  /// stream again. A real focus loss leaves [focusHeld] false, so this does
+  /// not steal the DAC back.
+  Future<void> _keepDirectIfFocused() async {
+    final player = _engine.player;
+    if (player == null || !_intendPlay || !_inBackground || player.playing) {
+      return;
+    }
+    final now = DateTime.now();
+    if (_directKeeps >= 3) return;
+    if (_nextDirectKeep != null && now.isBefore(_nextDirectKeep!)) return;
+    var held = false;
+    try {
+      held = await _channel.invokeMethod<bool>('focusHeld') ?? false;
+    } catch (_) {}
+    if (!claimDirectUsb(focusHeld: held, userWantsPlayback: _intendPlay)) {
+      return;
+    }
+    if (!_inBackground || player.playing) return;
+    _directKeeps++;
+    _nextDirectKeep = now.add(const Duration(milliseconds: 400));
+    await _engine.syncRoute();
+    if (!_intendPlay || !_inBackground || player.playing) return;
+    await player.play();
+  }
+
+  Future<void> _onFocusGained(bool shouldResume) async {
+    _directKeeps = 0;
+    if (!shouldResume || !_intendPlay) {
+      // Focus returned without an armed auto-resume. The DAC stays free
+      // until the user presses play.
+      return;
+    }
+    // Native debounced the regain and confirmed this process still holds
+    // focus. Run the full user-resume path so the DAC is claimed again,
+    // not just the mixer fallback.
+    await resume();
+    // A play() right after the native pause can leave the renderer wedged:
+    // ExoPlayer reports playing and advances the clock, but the AudioTrack
+    // is never fed. A seek to the current position forces the sink to
+    // flush and rebuild, mirroring the USB-path trick this app already
+    // uses when a direct stream reopens mid-playback.
+    final player = _engine.player;
+    if (player != null && player.playing) {
+      await player.seek(player.position);
+    }
+  }
+
+  /// Holds audio focus and the playback foreground service while [playing],
+  /// including after the activity has left the screen.
+  Future<void> anchorPlayback(bool playing) async {
+    if (kIsWeb || !Platform.isAndroid) return;
+    try {
+      final finished =
+          _engine.player?.processingState == ProcessingState.completed;
+      await _channel.invokeMethod<bool>(
+        playing ? 'holdPlayback' : 'releasePlayback',
+        playing ? null : {'userStopped': !_intendPlay || finished},
+      );
+    } catch (e) {
+      debugPrint('Playback anchor failed: $e');
+    }
+  }
+
+  AudioPlayer get player {
+    if (!ensurePlayer()) {
+      throw StateError('AudioPlayer unavailable');
+    }
+    return _engine.player!;
+  }
+
   List<SongModel> get allSongs => _allSongs;
+
+  /// High quality claims the USB DAC exclusively; standard stays on the
+  /// system mixer even when a DAC is attached.
+  bool _highQuality = true;
+
+  bool get highQuality => _highQuality;
+
+  Future<void> setQualityMode(bool high) async {
+    if (_highQuality == high) return;
+    _highQuality = high;
+    _engine.highQualityOutput = high;
+    // Re-apply the route now: standard mode must drop an active exclusive
+    // claim; high quality may open one mid-playback.
+    await _engine.syncRoute(force: true);
+    _engine.recheckUsbRoute();
+  }
+
+  void setMusicFolders(List<String> folders) {
+    _musicFolders = List.unmodifiable(folders);
+  }
+
+  /// Volume roots that hold at least one song, e.g. `/storage/emulated/0`.
+  List<String> storageRoots() {
+    final roots = <String>{};
+    for (final dir in _allDirs) {
+      final root = volumeRootOf(dir);
+      if (root != null) roots.add(root);
+    }
+    return roots.toList()..sort();
+  }
+
+  /// Direct child directories of [dir] that lead to at least one song.
+  List<String> childFolders(String dir) {
+    final children = <String>[];
+    for (final candidate in _allDirs) {
+      final parent = parentDirOf(candidate);
+      if (parent == dir) children.add(candidate);
+    }
+    return children..sort();
+  }
+
+  /// Song count anywhere inside [folder] (recursive).
+  int songsUnder(String folder) {
+    var count = 0;
+    for (final path in _rawPaths) {
+      if (pathUnder(path, folder)) count++;
+    }
+    return count;
+  }
+
+  /// Whether [path] lies inside [folder] (or equals it), on a path boundary.
+  static bool pathUnder(String path, String folder) {
+    if (folder.isEmpty) return false;
+    if (path == folder) return true;
+    return path.length > folder.length &&
+        path.startsWith(folder) &&
+        (folder.endsWith('/') || path[folder.length] == '/');
+  }
+
+  /// Parent directory of a path, or null at the root. Works for files and
+  /// directories alike.
+  static String? parentDirOf(String path) {
+    final index = path.lastIndexOf('/');
+    if (index <= 0) return null;
+    return path.substring(0, index);
+  }
+
+  /// Final path segment.
+  static String baseName(String path) {
+    final index = path.lastIndexOf('/');
+    return index < 0 ? path : path.substring(index + 1);
+  }
+
+  /// `/storage/emulated/0/...` -> `/storage/emulated/0`;
+  /// `/storage/XXXX-XXXX/...` -> `/storage/XXXX-XXXX`. Null otherwise.
+  static String? volumeRootOf(String path) {
+    if (!path.startsWith('/storage/')) return null;
+    final parts = path.split('/')..removeWhere((segment) => segment.isEmpty);
+    final volumeIndex = parts.length > 1 && parts[1] == 'emulated' ? 3 : 2;
+    if (parts.length < volumeIndex) return null;
+    return '/${parts.sublist(0, volumeIndex).join('/')}';
+  }
+
+  /// Short label for an added folder: the path after its volume root, with
+  /// an SD marker, e.g. `Music/周杰伦` or `SD · Netease`.
+  static String folderLabel(String folder) {
+    final root = volumeRootOf(folder);
+    if (root == null) return folder;
+    final sd = !root.startsWith('/storage/emulated/');
+    if (folder == root) {
+      return sd ? 'SD 卡' : '内部存储';
+    }
+    final relative = folder.substring(root.length + 1);
+    return sd ? 'SD · $relative' : relative;
+  }
+
   double get volume => _volume;
   PodShuffleMode get shuffleMode => _shuffleMode;
   PodRepeatMode get repeatMode => _repeatMode;
@@ -48,38 +286,31 @@ class MusicService {
   int get queueIndex => _currentQueueIndex;
   SongModel? get currentSong =>
       (_currentQueueIndex >= 0 && _currentQueueIndex < _currentQueue.length)
-          ? _currentQueue[_currentQueueIndex]
-          : null;
+      ? _currentQueue[_currentQueueIndex]
+      : null;
+
+  List<int> get currentQueueIds =>
+      _currentQueue.map((song) => song.id).toList(growable: false);
+
+  Duration get position => _engine.player?.position ?? Duration.zero;
 
   Future<void> init() async {
     if (_isInitialized) return;
     _isInitialized = true;
 
-    await initVolume();
-
-    // Configure AudioSession for uninterrupted background music playback
-    try {
-      final session = await AudioSession.instance;
-      await session.configure(const AudioSessionConfiguration(
-        avAudioSessionCategory: AVAudioSessionCategory.playback,
-        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.mixWithOthers,
-        avAudioSessionMode: AVAudioSessionMode.defaultMode,
-        avAudioSessionRouteSharingPolicy: AVAudioSessionRouteSharingPolicy.defaultPolicy,
-        avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
-        androidAudioAttributes: AndroidAudioAttributes(
-          contentType: AndroidAudioContentType.music,
-          flags: AndroidAudioFlags.none,
-          usage: AndroidAudioUsage.media,
-        ),
-        androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
-        androidWillPauseWhenDucked: false,
-      ));
-      await session.setActive(true);
-    } catch (e) {
-      debugPrint('Error configuring AudioSession: $e');
+    if (!ensurePlayer()) {
+      _engine.startListening();
+      await _engine.refreshRoute();
+      await scanLocalMusic();
+      return;
     }
+    final player = _engine.player!;
 
-    _player.playbackEventStream.listen(
+    await initVolume();
+    _engine.startListening();
+    await _engine.refreshRoute();
+
+    player.playbackEventStream.listen(
       (event) {},
       onError: (Object e, StackTrace st) {
         debugPrint('JustAudio playbackEvent error: $e');
@@ -87,10 +318,10 @@ class MusicService {
     );
 
     // Auto next track only on true completion
-    _player.playerStateStream.listen((state) {
+    player.playerStateStream.listen((state) {
       if (state.processingState == ProcessingState.completed) {
-        final pos = _player.position.inSeconds;
-        final dur = _player.duration?.inSeconds ?? 0;
+        final pos = player.position.inSeconds;
+        final dur = player.duration?.inSeconds ?? 0;
         if (dur > 5 && pos >= dur - 2) {
           playNext();
         }
@@ -114,6 +345,8 @@ class MusicService {
 
   Future<List<SongModel>> scanLocalMusic() async {
     final List<SongModel> songs = [];
+    _rawPaths.clear();
+    _allDirs.clear();
 
     if (!kIsWeb && Platform.isAndroid) {
       try {
@@ -125,7 +358,23 @@ class MusicService {
               final map = Map<String, dynamic>.from(item as Map);
               final contentUri = map['contentUri'] as String?;
               final path = map['path'] as String? ?? '';
-              
+
+              // Build the browsable directory tree from the raw scan so the
+              // picker can navigate every folder that leads to a song.
+              if (path.startsWith('/storage/')) {
+                _rawPaths.add(path);
+                var dir = parentDirOf(path);
+                while (dir != null) {
+                  _allDirs.add(dir);
+                  dir = parentDirOf(dir);
+                }
+              }
+              // Whitelist: a song is kept only inside an added folder.
+              if (_musicFolders.isNotEmpty &&
+                  !_musicFolders.any((f) => pathUnder(path, f))) {
+                continue;
+              }
+
               // Prioritize direct filesystem path to prevent Android ContentResolver stream timeouts
               String playbackUri = '';
               if (path.isNotEmpty && File(path).existsSync()) {
@@ -168,7 +417,10 @@ class MusicService {
               if (file is File) {
                 final ext = file.path.split('.').last.toLowerCase();
                 if (['mp3', 'wav', 'flac', 'm4a', 'aac', 'ogg'].contains(ext)) {
-                  final filename = file.uri.pathSegments.last.replaceAll('.$ext', '');
+                  final filename = file.uri.pathSegments.last.replaceAll(
+                    '.$ext',
+                    '',
+                  );
                   final parent = file.parent;
                   final albumDir = parent.path;
                   final albumName = parent.uri.pathSegments.isNotEmpty
@@ -203,7 +455,9 @@ class MusicService {
       }
     }
 
-    if (songs.isEmpty) {
+    // Sample tracks only when the device scan found nothing at all; an
+    // empty whitelist is a user choice, not an empty device.
+    if (songs.isEmpty && _rawPaths.isEmpty) {
       songs.addAll(_getSamplePlayableTracks());
     }
 
@@ -211,6 +465,8 @@ class MusicService {
     return songs;
   }
 
+  /// Shown when the device library is empty. This file is sample music,
+  /// not the click-wheel sounds (`tick.wav` and `select.wav`).
   List<SongModel> _getSamplePlayableTracks() {
     return const [
       SongModel(
@@ -248,49 +504,174 @@ class MusicService {
     ];
   }
 
-  Future<void> playSong(SongModel song, {List<SongModel>? queue}) async {
+  Future<void> playSong(SongModel song, {List<SongModel>? queue}) {
+    return _openSong(song, queue: queue, position: Duration.zero, play: true);
+  }
+
+  /// Loads [song] at [position] and leaves playback paused (resume on next launch).
+  Future<bool> restorePaused(
+    SongModel song, {
+    required List<SongModel> queue,
+    required Duration position,
+  }) {
+    return _openSong(song, queue: queue, position: position, play: false);
+  }
+
+  Future<bool> _openSong(
+    SongModel song, {
+    List<SongModel>? queue,
+    required Duration position,
+    required bool play,
+  }) async {
+    if (!ensurePlayer()) return false;
+    final player = _engine.player!;
+
     if (queue != null && queue.isNotEmpty) {
-      _currentQueue = List.from(queue);
+      _currentQueue = List<SongModel>.from(queue);
     } else if (!_currentQueue.contains(song)) {
       _currentQueue = [song];
     }
 
     _currentQueueIndex = _currentQueue.indexOf(song);
+    if (_currentQueueIndex < 0) {
+      _currentQueue = [song];
+      _currentQueueIndex = 0;
+    }
 
     try {
-      try {
-        final session = await AudioSession.instance;
-        await session.setActive(true);
-      } catch (_) {}
+      _intendPlay = play;
+      var focusGranted = true;
+      if (play && !kIsWeb && Platform.isAndroid) {
+        try {
+          focusGranted =
+              await _channel.invokeMethod<bool>('holdPlayback', {'user': true}) ==
+                  true;
+        } catch (_) {
+          focusGranted = false;
+        }
+        if (!focusGranted) {
+          // Focus is held by a call or another app. Do not start playback
+          // and do not claim the DAC.
+          _intendPlay = false;
+        }
+      }
+
+      // Open a direct USB stream before ExoPlayer builds an AudioTrack, so a
+      // 44.1 kHz file is not first handed to the system mixer. The claim
+      // runs only while playback is actually starting.
+      await _engine.noteTrack(song.uri);
 
       if (song.uri.startsWith('asset:///')) {
         final assetPath = song.uri.replaceFirst('asset:///', '');
-        await _player.setAsset(assetPath);
+        await player.setAsset(assetPath);
       } else if (File(song.uri).existsSync()) {
-        await _player.setFilePath(song.uri);
-      } else if (song.uri.startsWith('content://') || song.uri.startsWith('file://')) {
-        await _player.setAudioSource(
+        await player.setFilePath(song.uri);
+      } else if (song.uri.startsWith('content://') ||
+          song.uri.startsWith('file://')) {
+        await player.setAudioSource(
           AudioSource.uri(Uri.parse(song.uri)),
           preload: true,
         );
       } else {
-        await _player.setFilePath(song.uri);
+        await player.setFilePath(song.uri);
       }
-      await _player.play();
+      if (position > Duration.zero) {
+        await player.seek(position);
+      }
+      if (play && focusGranted) {
+        await _ensureNotificationPermission();
+        // Same as resume(): never block the route sync on play().
+        unawaited(
+          player.play().then(
+            (_) {},
+            onError: (Object e) {
+              debugPrint('play failed on open: $e');
+            },
+          ),
+        );
+        // playWhenReady is now true, so a fresh direct open can move the sink.
+        await _engine.syncRoute(force: true);
+        _engine.recheckUsbRoute();
+      } else {
+        await _engine.syncRoute();
+      }
+      return true;
     } catch (e) {
       debugPrint('Error playing song ${song.title}: $e');
+      return false;
+    }
+  }
+
+  Future<void> _ensureNotificationPermission() async {
+    if (_askedNotificationPermission || kIsWeb || !Platform.isAndroid) return;
+    _askedNotificationPermission = true;
+    try {
+      await Permission.notification.request();
+    } catch (e) {
+      debugPrint('Notification permission request failed: $e');
+    }
+    // The battery whitelist matters more: HyperOS freezes the process
+    // ~20s after audio pauses, which kills the background auto-resume.
+    try {
+      await _channel.invokeMethod<void>('requestIgnoreBatteryOptimizations');
+    } catch (_) {}
+  }
+
+  Future<void> pause() async {
+    _intendPlay = false;
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        await _channel.invokeMethod<void>('userPause');
+      } catch (_) {}
+    }
+    final player = _engine.player;
+    if (player == null || !player.playing) return;
+    await player.pause();
+  }
+
+  Future<void> resume() async {
+    if (!ensurePlayer()) return;
+    await _ensureNotificationPermission();
+    if (currentSong == null && _allSongs.isNotEmpty) {
+      await playSong(_allSongs.first, queue: _allSongs);
+      return;
+    }
+    _intendPlay = true;
+    if (!kIsWeb && Platform.isAndroid) {
+      var granted = false;
+      try {
+        granted =
+            await _channel.invokeMethod<bool>('holdPlayback', {'user': true}) ==
+                true;
+      } catch (_) {}
+      if (!granted) {
+        _intendPlay = false;
+        return;
+      }
+    }
+    // Do not await play(): on the first play after a restore its future can
+    // hang, which used to skip the route sync below and leave the USB DAC
+    // on the system mixer. playWhenReady is set synchronously, so the
+    // direct claim and sink flush still see a playing player.
+    unawaited(
+      _engine.player!.play().then(
+        (_) {},
+        onError: (Object e) {
+          debugPrint('play failed after resume: $e');
+        },
+      ),
+    );
+    if (!kIsWeb && Platform.isAndroid) {
+      await _engine.syncRoute(force: true);
+      _engine.recheckUsbRoute();
     }
   }
 
   Future<void> togglePlayPause() async {
-    if (_player.playing) {
-      await _player.pause();
+    if (_engine.player?.playing == true) {
+      await pause();
     } else {
-      if (currentSong == null && _allSongs.isNotEmpty) {
-        await playSong(_allSongs.first, queue: _allSongs);
-      } else {
-        await _player.play();
-      }
+      await resume();
     }
   }
 
@@ -302,39 +683,13 @@ class MusicService {
     _repeatMode = mode;
   }
 
-  void toggleShuffle() {
-    _shuffleMode = _shuffleMode == PodShuffleMode.off
-        ? PodShuffleMode.songs
-        : PodShuffleMode.off;
-  }
-
-  void toggleRepeat() {
-    switch (_repeatMode) {
-      case PodRepeatMode.off:
-        _repeatMode = PodRepeatMode.all;
-        break;
-      case PodRepeatMode.all:
-        _repeatMode = PodRepeatMode.one;
-        break;
-      case PodRepeatMode.one:
-        _repeatMode = PodRepeatMode.off;
-        break;
-    }
-  }
-
-  Future<void> shuffleAndPlayAll() async {
-    if (_allSongs.isEmpty) return;
-    final list = List<SongModel>.from(_allSongs)..shuffle();
-    _shuffleMode = PodShuffleMode.songs;
-    await playSong(list.first, queue: list);
-  }
-
   Future<void> playNext() async {
     if (_currentQueue.isEmpty) return;
 
     if (_repeatMode == PodRepeatMode.one) {
       await seek(Duration.zero);
-      await _player.play();
+      _intendPlay = true;
+      await _engine.player?.play();
       return;
     }
 
@@ -350,7 +705,8 @@ class MusicService {
         if (_repeatMode == PodRepeatMode.all) {
           nextIndex = 0;
         } else {
-          await _player.stop();
+          _intendPlay = false;
+          await _engine.player?.stop();
           return;
         }
       }
@@ -360,8 +716,8 @@ class MusicService {
 
   Future<void> playPrevious() async {
     if (_currentQueue.isEmpty) return;
-    if (_player.position.inSeconds > 3) {
-      await _player.seek(Duration.zero);
+    if ((_engine.player?.position.inSeconds ?? 0) > 3) {
+      await _engine.player?.seek(Duration.zero);
       return;
     }
 
@@ -373,9 +729,8 @@ class MusicService {
   }
 
   Future<void> seek(Duration position) async {
-    await _player.seek(position);
+    await _engine.player?.seek(position);
   }
-
 
   Future<int> getBatteryLevel() async {
     if (!kIsWeb && Platform.isAndroid) {
@@ -385,25 +740,25 @@ class MusicService {
       } catch (_) {}
     }
     if (!kIsWeb && Platform.isWindows) {
-      try {
-        final result = await Process.run(
-          'powershell',
-          [
+      // flutter test also runs on the Windows host; spawning powershell
+      // there leaves dart:io timers pending and trips the test binding.
+      if (Platform.environment['FLUTTER_TEST'] != 'true') {
+        try {
+          final result = await Process.run('powershell', [
             '-NoProfile',
             '-Command',
-            '(Get-CimInstance -ClassName Win32_Battery | Select-Object -First 1 -ExpandProperty EstimatedChargeRemaining)'
-          ],
-        );
-        final parsed = int.tryParse(result.stdout.toString().trim());
-        if (parsed != null && parsed >= 0 && parsed <= 100) return parsed;
-        // No battery (desktop AC) — show full.
-        return 100;
-      } catch (_) {
-        return 100;
+            '(Get-CimInstance -ClassName Win32_Battery | Select-Object -First 1 -ExpandProperty EstimatedChargeRemaining)',
+          ]);
+          final parsed = int.tryParse(result.stdout.toString().trim());
+          if (parsed != null && parsed >= 0 && parsed <= 100) return parsed;
+          // No battery (desktop AC) — show full.
+        } catch (_) {}
       }
+      return 100;
     }
     return 100;
   }
+
   File? _findSidecarCover(Directory dir) {
     const names = [
       'cover.jpg',
@@ -425,9 +780,14 @@ class MusicService {
     try {
       for (final entity in dir.listSync()) {
         if (entity is File) {
-          final lower = entity.path.split(Platform.pathSeparator).last.toLowerCase();
+          final lower = entity.path
+              .split(Platform.pathSeparator)
+              .last
+              .toLowerCase();
           if (lower.startsWith('albumart') &&
-              (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png'))) {
+              (lower.endsWith('.jpg') ||
+                  lower.endsWith('.jpeg') ||
+                  lower.endsWith('.png'))) {
             return entity;
           }
         }
@@ -444,7 +804,9 @@ class MusicService {
 
     if (!kIsWeb && Platform.isAndroid) {
       try {
-        final result = await _channel.invokeMethod<Uint8List>('getArtwork', {'albumId': albumId});
+        final result = await _channel.invokeMethod<Uint8List>('getArtwork', {
+          'albumId': albumId,
+        });
         _artworkCache[albumId] = result;
         return result;
       } catch (_) {
@@ -479,24 +841,32 @@ class MusicService {
           _volume = v.clamp(0.0, 1.0);
         }
       } catch (_) {}
-    } else {
-      _volume = _player.volume;
+    } else if (_engine.player != null) {
+      _volume = _engine.player!.volume;
     }
   }
 
-  Future<void> setVolume(double vol) async {
+  Future<void> setVolume(double vol, {bool writeSystem = true}) async {
     _volume = vol.clamp(0.0, 1.0);
+    final direct = _engine.snapshot.directActive;
     try {
-      await _player.setVolume(_volume);
+      // Mixer loudness is the system stream alone. Direct loudness is the
+      // USB curve, so the player volume is not a second attenuator there.
+      await _engine.player?.setVolume(direct ? _volume : 1.0);
     } catch (_) {}
     if (!kIsWeb && Platform.isAndroid) {
       try {
-        await _channel.invokeMethod('setVolume', {'volume': _volume});
+        final applied = await _channel.invokeMethod<dynamic>('setVolume', {
+          'volume': _volume,
+          'writeSystem': writeSystem && !direct,
+        });
+        _engine.noteDirectReport(applied);
       } catch (_) {}
     }
   }
 
   void dispose() {
-    _player.dispose();
+    _engine.dispose();
+    _isInitialized = false;
   }
 }

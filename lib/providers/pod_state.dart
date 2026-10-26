@@ -1,28 +1,38 @@
 import 'dart:async';
 import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+
 import '../models/album_model.dart';
 import '../models/menu_item.dart';
 import '../models/song_model.dart';
 import '../services/music_service.dart';
+import '../services/output_probe.dart';
+import '../services/settings_store.dart';
 import '../services/sound_service.dart';
 import '../theme/pod_theme.dart';
 
-enum NowPlayingSubMode {
-  volume,
-  scrub,
-  rating,
-}
+enum NowPlayingSubMode { volume, scrub, rating }
 
-class PodState extends ChangeNotifier {
+class PodState extends ChangeNotifier with WidgetsBindingObserver {
   final SoundService _soundService = SoundService();
   final MusicService _musicService = MusicService();
+  SettingsStore? _store;
+  final Completer<void> _readyCompleter = Completer<void>();
+
+  /// Completes after saved settings have been applied (or skipped).
+  Future<void> get ready => _readyCompleter.future;
 
   // Settings
   ShellThemeType _shellType = ShellThemeType.spaceGray;
-  ScreenThemeType _screenType = ScreenThemeType.colorLcd;
   bool _soundEnabled = true;
   bool _hapticsEnabled = true;
+  List<String> _musicFolders = const [];
+  bool _qualityModeHigh = true;
+
+  // Quality-mode picker opened by a double tap on the center dot.
+  bool _modePopupVisible = false;
+  int _modePopupIndex = 0;
 
   // Navigation Stack
   final List<PodMenuScreen> _screenStack = [];
@@ -44,13 +54,25 @@ class PodState extends ChangeNotifier {
   bool _isShowingVolume = false;
   Timer? _volumeBarTimer;
 
-  // Phase 2: Now Playing sub-modes & ratings
+  // Now Playing sub-modes and ratings
   NowPlayingSubMode _nowPlayingMode = NowPlayingSubMode.volume;
   int _scrubPositionSeconds = 0;
   Timer? _subModeTimer;
   final Map<int, int> _songRatings = {};
+  bool _loadingSettings = false;
+  bool _holdPersist = false;
+  bool _pendingPersist = false;
+  bool _disposed = false;
+  bool _restoredPlayback = false;
+  double? _savedVolume;
+  int? _savedSongId;
+  int _savedPositionMs = 0;
+  List<int> _savedQueueIds = const [];
+  Timer? _persistTimer;
+  Future<void> _persistChain = Future<void>.value();
+  DateTime? _nextPositionPersistAt;
 
-  // Phase 2: 3D Cover Flow
+  // Cover Flow
   List<AlbumModel> _albums = [];
   int _coverFlowIndex = 0;
 
@@ -58,18 +80,189 @@ class PodState extends ChangeNotifier {
   StreamSubscription? _positionSub;
   StreamSubscription? _durationSub;
 
-  PodState() {
-    _initAudioListeners();
+  PodState({SettingsStore? settingsStore}) {
+    WidgetsBinding.instance.addObserver(this);
+    _musicService.onOutputChanged = () {
+      if (_disposed) return;
+      _refreshSettingsMenu();
+      notifyListeners();
+    };
     _initMenuHierarchy();
     _initBatteryMonitor();
+    if (settingsStore != null) {
+      _store = settingsStore;
+      _loadingSettings = true;
+      _applySettings(settingsStore.load());
+      _loadingSettings = false;
+      _markReady();
+      _initAudioListeners();
+    } else {
+      unawaited(_bootstrapSettings());
+    }
+  }
+
+  void _markReady() {
+    if (!_readyCompleter.isCompleted) {
+      _readyCompleter.complete();
+    }
+  }
+
+  Future<void> _bootstrapSettings() async {
+    _loadingSettings = true;
+    try {
+      _store = await SettingsStore.open();
+      if (_disposed) return;
+      _applySettings(_store!.load());
+    } catch (e) {
+      debugPrint('Settings load failed: $e');
+    } finally {
+      _loadingSettings = false;
+      _markReady();
+    }
+    if (_disposed) return;
+    if (_pendingPersist) {
+      _pendingPersist = false;
+      _schedulePersist(immediate: true);
+    }
+    _initAudioListeners();
+  }
+
+  void _applySettings(AppSettings settings) {
+    _shellType = _parseShell(settings.shell);
+    _soundEnabled = settings.soundEnabled;
+    _hapticsEnabled = settings.hapticsEnabled;
+    _musicFolders = List.unmodifiable(settings.musicFolders);
+    // Must be set before the first scan, which runs in MusicService.init().
+    _musicService.setMusicFolders(_musicFolders);
+    _qualityModeHigh = settings.highQuality;
+    unawaited(_musicService.setQualityMode(_qualityModeHigh));
+    _songRatings
+      ..clear()
+      ..addAll(settings.ratings);
+    _musicService.setShuffleMode(_parseShuffle(settings.shuffle));
+    _musicService.setRepeatMode(_parseRepeat(settings.repeat));
+    _savedVolume = settings.volume;
+    _savedSongId = settings.lastSongId;
+    _savedPositionMs = settings.lastPositionMs;
+    _savedQueueIds = List<int>.from(settings.lastQueueIds);
+  }
+
+  ShellThemeType _parseShell(String name) {
+    for (final value in ShellThemeType.values) {
+      if (value.name == name) return value;
+    }
+    return ShellThemeType.spaceGray;
+  }
+
+  PodShuffleMode _parseShuffle(String name) {
+    for (final value in PodShuffleMode.values) {
+      if (value.name == name) return value;
+    }
+    return PodShuffleMode.off;
+  }
+
+  PodRepeatMode _parseRepeat(String name) {
+    for (final value in PodRepeatMode.values) {
+      if (value.name == name) return value;
+    }
+    return PodRepeatMode.all;
+  }
+
+  AppSettings _snapshot() {
+    final song = _musicService.currentSong;
+    return AppSettings(
+      shell: _shellType.name,
+      soundEnabled: _soundEnabled,
+      hapticsEnabled: _hapticsEnabled,
+      highQuality: _qualityModeHigh,
+      musicFolders: List<String>.from(_musicFolders),
+      shuffle: _musicService.shuffleMode.name,
+      repeat: _musicService.repeatMode.name,
+      volume: _savedVolume,
+      ratings: Map<int, int>.from(_songRatings),
+      lastSongId: song?.id ?? _savedSongId,
+      lastPositionMs: song != null
+          ? _musicService.position.inMilliseconds
+          : _savedPositionMs,
+      lastQueueIds: song != null
+          ? _musicService.currentQueueIds
+          : List<int>.from(_savedQueueIds),
+    );
+  }
+
+  void _schedulePersist({bool immediate = false}) {
+    if (_disposed || _loadingSettings || _holdPersist) return;
+    if (_store == null) {
+      _pendingPersist = true;
+      return;
+    }
+    if (immediate) {
+      _persistTimer?.cancel();
+      _persistTimer = null;
+      _writeSettings();
+      return;
+    }
+    _persistTimer ??= Timer(const Duration(milliseconds: 500), _writeSettings);
+  }
+
+  void _writeSettings() {
+    _persistTimer = null;
+    final store = _store;
+    if (store == null || _disposed || _loadingSettings || _holdPersist) return;
+    final snapshot = _snapshot();
+    if (snapshot.volume != null) {
+      _savedVolume = snapshot.volume;
+    }
+    if (snapshot.lastSongId != null) {
+      _savedSongId = snapshot.lastSongId;
+      _savedPositionMs = snapshot.lastPositionMs;
+      _savedQueueIds = List<int>.from(snapshot.lastQueueIds);
+    }
+    _persistChain = _persistChain.then((_) => store.save(snapshot));
+  }
+
+  void _notePositionPersist() {
+    final now = DateTime.now();
+    if (_nextPositionPersistAt != null &&
+        now.isBefore(_nextPositionPersistAt!)) {
+      return;
+    }
+    _nextPositionPersistAt = now.add(const Duration(seconds: 5));
+    _schedulePersist(immediate: true);
+  }
+
+  /// Waits until any in-flight settings write has finished.
+  @visibleForTesting
+  Future<void> flushSettings() async {
+    _persistTimer?.cancel();
+    _persistTimer = null;
+    _writeSettings();
+    await _persistChain;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final background =
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused;
+    _musicService.setInBackground(background);
+    if (background || state == AppLifecycleState.detached) {
+      _schedulePersist(immediate: true);
+      if (_isPlaying && state != AppLifecycleState.detached) {
+        unawaited(_musicService.anchorPlayback(true));
+      }
+    }
   }
 
   // Getters
   ShellThemeType get shellType => _shellType;
-  ScreenThemeType get screenType => _screenType;
   bool get soundEnabled => _soundEnabled;
   bool get hapticsEnabled => _hapticsEnabled;
-  PodTheme get currentTheme => PodTheme.getTheme(_shellType, _screenType);
+  bool get qualityModeHigh => _qualityModeHigh;
+  bool get modePopupVisible => _modePopupVisible;
+  int get modePopupIndex => _modePopupIndex;
+  PodTheme get currentTheme => PodTheme.getTheme(_shellType);
 
   bool get isPlaying => _isPlaying;
   String get currentTitle => _currentTitle;
@@ -79,18 +272,21 @@ class PodState extends ChangeNotifier {
   int get currentDurationSeconds => _currentDurationSeconds;
   int get currentPositionSeconds => _currentPositionSeconds;
   int get batteryLevel => _batteryLevel;
-  bool get hasActivePlayback => _hasActivePlayback || _musicService.currentSong != null;
+  bool get hasActivePlayback =>
+      _hasActivePlayback || _musicService.currentSong != null;
+  OutputSnapshot get outputSnapshot => _musicService.outputSnapshot;
   int get queuePosition {
     final idx = _musicService.queueIndex;
     return idx >= 0 ? idx + 1 : 0;
   }
+
   int get queueLength => _musicService.queueLength;
   SongModel? get currentSong => _musicService.currentSong;
   Uint8List? get currentArtworkBytes => _currentArtworkBytes;
   bool get isShowingVolume => _isShowingVolume;
   double get volume => _musicService.volume;
 
-  // Phase 2 Getters
+  // Now Playing and Cover Flow
   NowPlayingSubMode get nowPlayingMode => _nowPlayingMode;
   int get scrubPositionSeconds => _scrubPositionSeconds;
   int get currentSongRating {
@@ -98,23 +294,25 @@ class PodState extends ChangeNotifier {
     if (song == null) return 0;
     return _songRatings[song.id] ?? 0;
   }
+
   PodShuffleMode get shuffleMode => _musicService.shuffleMode;
   PodRepeatMode get repeatMode => _musicService.repeatMode;
   List<AlbumModel> get albums => _albums;
   int get coverFlowIndex => _coverFlowIndex;
   AlbumModel? get currentCoverFlowAlbum =>
-      (_albums.isNotEmpty && _coverFlowIndex >= 0 && _coverFlowIndex < _albums.length)
-          ? _albums[_coverFlowIndex]
-          : null;
-
-  Future<dynamic> getArtwork(int? albumId) => _musicService.getArtwork(albumId);
+      (_albums.isNotEmpty &&
+          _coverFlowIndex >= 0 &&
+          _coverFlowIndex < _albums.length)
+      ? _albums[_coverFlowIndex]
+      : null;
 
   /// Best artwork for the split-view right pane for [item].
   /// Prefers now-playing art, then item album id, then first library cover.
   Uint8List? previewArtworkFor(PodMenuItem item) {
     if (item.previewAlbumId != null) {
       for (final album in _albums) {
-        if (album.albumId == item.previewAlbumId && album.artworkBytes != null) {
+        if (album.albumId == item.previewAlbumId &&
+            album.artworkBytes != null) {
           return album.artworkBytes;
         }
       }
@@ -141,57 +339,161 @@ class PodState extends ChangeNotifier {
   PodMenuScreen get currentScreen =>
       _screenStack.isNotEmpty ? _screenStack.last : _buildMainMenu();
 
-  int get currentSelectedIndex =>
-      _indexStack.isNotEmpty ? _indexStack.last : 0;
+  int get currentSelectedIndex => _indexStack.isNotEmpty ? _indexStack.last : 0;
 
   bool get canGoBack => _screenStack.length > 1;
 
   void _initAudioListeners() {
-    _musicService.init().then((_) {
+    if (_musicService.ensurePlayer()) {
+      _playerStateSub = _musicService.player.playerStateStream.listen((state) {
+        final wasActive = _hasActivePlayback;
+        final wasPlaying = _isPlaying;
+        _isPlaying = state.playing;
+        final song = _musicService.currentSong;
+        if (song != null) {
+          _hasActivePlayback = true;
+          if (_currentTitle != song.title) {
+            _currentTitle = song.title;
+            _currentArtist = song.artist;
+            _currentAlbum = song.album;
+            _loadArtworkForSong(song);
+            _schedulePersist(immediate: true);
+          }
+        }
+        if (!wasActive && _hasActivePlayback) {
+          _refreshPlaybackMenus();
+        }
+        if (wasPlaying && !state.playing) {
+          _schedulePersist(immediate: true);
+        }
+        if (!_disposed) notifyListeners();
+      });
+
+      _positionSub = _musicService.player.positionStream.listen((pos) {
+        _currentPositionSeconds = pos.inSeconds;
+        if (_currentDurationSeconds > 0) {
+          _playbackProgress =
+              (_currentPositionSeconds / _currentDurationSeconds).clamp(
+                0.0,
+                1.0,
+              );
+        }
+        if (_isPlaying) {
+          _notePositionPersist();
+        }
+        if (!_disposed) notifyListeners();
+      });
+
+      _durationSub = _musicService.player.durationStream.listen((dur) {
+        if (dur != null && dur.inSeconds > 0) {
+          _currentDurationSeconds = dur.inSeconds;
+        } else {
+          final song = _musicService.currentSong;
+          if (song != null && song.durationMs > 0) {
+            _currentDurationSeconds = song.durationMs ~/ 1000;
+          }
+        }
+        if (!_disposed) notifyListeners();
+      });
+    }
+
+    _musicService.init().then((_) async {
+      if (_disposed) return;
+      final savedVolume = _savedVolume;
+      if (savedVolume != null) {
+        await _musicService.setVolume(savedVolume, writeSystem: false);
+      }
+      if (_disposed) return;
+      await _restorePlaybackIfAny();
+      if (_disposed) return;
       _rebuildMenus();
     });
+  }
 
-    _playerStateSub = _musicService.player.playerStateStream.listen((state) {
-      _isPlaying = state.playing;
-      final song = _musicService.currentSong;
-      if (song != null) {
-        _hasActivePlayback = true;
-        if (_currentTitle != song.title) {
-          _currentTitle = song.title;
-          _currentArtist = song.artist;
-          _currentAlbum = song.album;
-          _loadArtworkForSong(song);
+  Future<void> _restorePlaybackIfAny() async {
+    final songId = _savedSongId;
+    if (songId == null || _restoredPlayback) return;
+    _restoredPlayback = true;
+
+    final songs = _musicService.allSongs;
+    SongModel? song;
+    for (final candidate in songs) {
+      if (candidate.id == songId) {
+        song = candidate;
+        break;
+      }
+    }
+    final SongModel? restored = song;
+    if (restored == null) return;
+
+    final queue = <SongModel>[];
+    for (final id in _savedQueueIds) {
+      for (final candidate in songs) {
+        if (candidate.id == id) {
+          queue.add(candidate);
+          break;
         }
       }
-      notifyListeners();
-    });
+    }
+    if (!queue.any((item) => item.id == restored.id)) {
+      queue.insert(0, restored);
+    }
 
-    _positionSub = _musicService.player.positionStream.listen((pos) {
-      _currentPositionSeconds = pos.inSeconds;
-      if (_currentDurationSeconds > 0) {
-        _playbackProgress = (_currentPositionSeconds / _currentDurationSeconds).clamp(0.0, 1.0);
-      }
-      notifyListeners();
-    });
+    _hasActivePlayback = true;
+    _currentTitle = restored.title;
+    _currentArtist = restored.artist;
+    _currentAlbum = restored.album;
+    _currentDurationSeconds = restored.durationMs ~/ 1000;
+    _currentPositionSeconds = _savedPositionMs ~/ 1000;
+    if (_currentDurationSeconds > 0) {
+      _playbackProgress = (_currentPositionSeconds / _currentDurationSeconds)
+          .clamp(0.0, 1.0);
+    }
+    _loadArtworkForSong(restored);
 
-    _durationSub = _musicService.player.durationStream.listen((dur) {
-      if (dur != null && dur.inSeconds > 0) {
-        _currentDurationSeconds = dur.inSeconds;
-      } else {
-        final song = _musicService.currentSong;
-        if (song != null && song.durationMs > 0) {
-          _currentDurationSeconds = song.durationMs ~/ 1000;
-        }
-      }
-      notifyListeners();
-    });
+    _holdPersist = true;
+    try {
+      await _musicService.restorePaused(
+        restored,
+        queue: queue,
+        position: Duration(milliseconds: _savedPositionMs),
+      );
+    } finally {
+      _holdPersist = false;
+    }
+    _refreshPlaybackMenus();
+    if (!_disposed) notifyListeners();
   }
 
   void _rebuildMenus() {
     _buildAlbumsList();
-    if (_screenStack.isNotEmpty && _screenStack.first.id == 'main') {
-      _screenStack[0] = _buildMainMenu();
-      notifyListeners();
+    _refreshPlaybackMenus();
+    if (!_disposed) notifyListeners();
+  }
+
+  /// Rebuilds the root menu so 「正在播放」 tracks whether a song is loaded,
+  /// and the Music menu so its play-mode title stays current.
+  void _refreshPlaybackMenus() {
+    if (_screenStack.isEmpty || _screenStack.first.id != 'main') return;
+    final root = _buildMainMenu();
+    _screenStack[0] = root;
+    if (_indexStack.isNotEmpty) {
+      final last = root.items.isEmpty ? 0 : root.items.length - 1;
+      if (_indexStack[0] > last) _indexStack[0] = last;
+    }
+    for (var i = 1; i < _screenStack.length; i++) {
+      if (_screenStack[i].id != 'music') continue;
+      final items = _musicMenuItems();
+      final last = items.isEmpty ? 0 : items.length - 1;
+      _screenStack[i] = PodMenuScreen(
+        id: 'music',
+        title: '音乐',
+        items: items,
+        isSplitView: true,
+      );
+      if (i < _indexStack.length && _indexStack[i] > last) {
+        _indexStack[i] = last;
+      }
     }
   }
 
@@ -231,7 +533,7 @@ class PodState extends ChangeNotifier {
   PodMenuScreen _buildMainMenu() {
     return PodMenuScreen(
       id: 'main',
-      title: 'iPod',
+      title: 'LikePod',
       isSplitView: true,
       items: [
         PodMenuItem(
@@ -240,93 +542,7 @@ class PodState extends ChangeNotifier {
           previewType: PreviewType.artwork,
           previewIcon: Icons.music_note_rounded,
           subMenuSplitView: true,
-          subMenuItems: () => [
-            PodMenuItem(
-              id: 'music_cover_flow',
-              title: 'Cover Flow',
-              previewType: PreviewType.artwork,
-              previewIcon: Icons.view_carousel_rounded,
-              hasSubmenu: false,
-              onSelect: () => _openCoverFlow(),
-            ),
-            PodMenuItem(
-              id: 'genius_mixes',
-              title: 'Genius 混合曲目',
-              previewType: PreviewType.artwork,
-              previewIcon: Icons.auto_awesome_rounded,
-              subMenuItems: () => _buildStubMenu('无 Genius 混合曲目'),
-            ),
-            PodMenuItem(
-              id: 'playlists',
-              title: '播放列表',
-              previewType: PreviewType.artwork,
-              previewIcon: Icons.playlist_play_rounded,
-              subMenuItems: () => [
-                PodMenuItem(
-                  id: 'all_songs_playlist',
-                  title: '所有歌曲 (${_musicService.allSongs.length})',
-                  hasSubmenu: false,
-                  onSelect: () {
-                    if (_musicService.allSongs.isNotEmpty) {
-                      _playSong(_musicService.allSongs.first, queue: _musicService.allSongs);
-                    }
-                  },
-                ),
-                PodMenuItem(
-                  id: 'rescan',
-                  title: '重新扫描',
-                  hasSubmenu: false,
-                  onSelect: () async {
-                    await _musicService.scanLocalMusic();
-                    _rebuildMenus();
-                  },
-                ),
-              ],
-            ),
-            PodMenuItem(
-              id: 'artists',
-              title: '表演者',
-              previewType: PreviewType.artwork,
-              previewIcon: Icons.person_rounded,
-              subMenuItems: () => _buildArtistsMenu(),
-            ),
-            PodMenuItem(
-              id: 'albums',
-              title: '专辑',
-              previewType: PreviewType.artwork,
-              previewIcon: Icons.album_rounded,
-              subMenuItems: () => _buildAlbumsMenu(),
-            ),
-            PodMenuItem(
-              id: 'compilations',
-              title: '选集',
-              previewType: PreviewType.artwork,
-              previewIcon: Icons.library_music_rounded,
-              subMenuItems: () => _buildStubMenu('无选集'),
-            ),
-            PodMenuItem(
-              id: 'songs',
-              title: '歌曲',
-              previewType: PreviewType.artwork,
-              previewIcon: Icons.audiotrack_rounded,
-              subMenuTwoLineRows: true,
-              subMenuItems: () => _buildSongsMenu(),
-            ),
-            PodMenuItem(
-              id: 'genres',
-              title: '风格',
-              previewType: PreviewType.artwork,
-              previewIcon: Icons.category_rounded,
-              subMenuItems: () => _buildStubMenu('无风格'),
-            ),
-            PodMenuItem(
-              id: 'composers',
-              title: '作曲家',
-              previewType: PreviewType.artwork,
-              previewIcon: Icons.edit_note_rounded,
-              subMenuItems: () => _buildStubMenu('无作曲家'),
-            ),
-          ],
+          subMenuItems: _musicMenuItems,
         ),
         PodMenuItem(
           id: 'videos',
@@ -343,195 +559,305 @@ class PodState extends ChangeNotifier {
           subMenuItems: () => _buildStubMenu('无照片'),
         ),
         PodMenuItem(
-          id: 'podcasts',
-          title: 'Podcast',
-          previewType: PreviewType.icon,
-          previewIcon: Icons.podcasts_rounded,
-          subMenuItems: () => _buildStubMenu('无 Podcast'),
-        ),
-        PodMenuItem(
-          id: 'extras',
-          title: '附加功能',
-          previewType: PreviewType.icon,
-          previewIcon: Icons.extension_rounded,
-          subMenuItems: () => _buildStubMenu('暂无附加功能'),
-        ),
-        PodMenuItem(
           id: 'settings',
           title: '设置',
           previewType: PreviewType.icon,
           previewIcon: Icons.settings_rounded,
-          subMenuItems: () => [
-            PodMenuItem(
-              id: 'shell_theme',
-              title: '机身外观',
-              subtitle: _getShellName(_shellType),
-              subMenuItems: () => [
-                PodMenuItem(
-                  id: 'theme_space_gray',
-                  title: 'Space Gray',
-                  hasSubmenu: false,
-                  onSelect: () => setShellType(ShellThemeType.spaceGray),
-                ),
-                PodMenuItem(
-                  id: 'theme_white',
-                  title: 'Classic White',
-                  hasSubmenu: false,
-                  onSelect: () => setShellType(ShellThemeType.classicWhite),
-                ),
-                PodMenuItem(
-                  id: 'theme_silver',
-                  title: 'Metallic Silver',
-                  hasSubmenu: false,
-                  onSelect: () => setShellType(ShellThemeType.metallicSilver),
-                ),
-                PodMenuItem(
-                  id: 'theme_black',
-                  title: 'Stealth Black',
-                  hasSubmenu: false,
-                  onSelect: () => setShellType(ShellThemeType.stealthBlack),
-                ),
-                PodMenuItem(
-                  id: 'theme_u2',
-                  title: 'U2 Special Edition',
-                  hasSubmenu: false,
-                  onSelect: () => setShellType(ShellThemeType.u2Special),
-                ),
-                PodMenuItem(
-                  id: 'theme_sepia',
-                  title: 'Sepia Nostalgia',
-                  hasSubmenu: false,
-                  onSelect: () => setShellType(ShellThemeType.sepiaGold),
-                ),
-              ],
-            ),
-            PodMenuItem(
-              id: 'screen_theme',
-              title: '屏幕风格',
-              subtitle: _getScreenName(_screenType),
-              subMenuItems: () => [
-                PodMenuItem(
-                  id: 'screen_color',
-                  title: 'Classic Color LCD',
-                  hasSubmenu: false,
-                  onSelect: () => setScreenType(ScreenThemeType.colorLcd),
-                ),
-                PodMenuItem(
-                  id: 'screen_sepia',
-                  title: 'Warm Sepia',
-                  hasSubmenu: false,
-                  onSelect: () => setScreenType(ScreenThemeType.sepiaRetro),
-                ),
-                PodMenuItem(
-                  id: 'screen_green',
-                  title: 'Monochrome Green',
-                  hasSubmenu: false,
-                  onSelect: () => setScreenType(ScreenThemeType.monochromeGreen),
-                ),
-                PodMenuItem(
-                  id: 'screen_dark',
-                  title: 'Dark OLED',
-                  hasSubmenu: false,
-                  onSelect: () => setScreenType(ScreenThemeType.darkOled),
-                ),
-              ],
-            ),
-            PodMenuItem(
-              id: 'repeat_setting',
-              title: '重复',
-              subtitle: _getRepeatName(_musicService.repeatMode),
-              subMenuItems: () => [
-                PodMenuItem(
-                  id: 'repeat_off',
-                  title: '关闭',
-                  hasSubmenu: false,
-                  onSelect: () {
-                    _musicService.setRepeatMode(PodRepeatMode.off);
-                    notifyListeners();
-                  },
-                ),
-                PodMenuItem(
-                  id: 'repeat_all',
-                  title: '全部歌曲',
-                  hasSubmenu: false,
-                  onSelect: () {
-                    _musicService.setRepeatMode(PodRepeatMode.all);
-                    notifyListeners();
-                  },
-                ),
-                PodMenuItem(
-                  id: 'repeat_one',
-                  title: '单曲',
-                  hasSubmenu: false,
-                  onSelect: () {
-                    _musicService.setRepeatMode(PodRepeatMode.one);
-                    notifyListeners();
-                  },
-                ),
-              ],
-            ),
-            PodMenuItem(
-              id: 'shuffle_setting',
-              title: '随机播放',
-              subtitle: _musicService.shuffleMode == PodShuffleMode.songs ? '歌曲' : '关闭',
-              subMenuItems: () => [
-                PodMenuItem(
-                  id: 'shuffle_off',
-                  title: '关闭',
-                  hasSubmenu: false,
-                  onSelect: () {
-                    _musicService.setShuffleMode(PodShuffleMode.off);
-                    notifyListeners();
-                  },
-                ),
-                PodMenuItem(
-                  id: 'shuffle_songs',
-                  title: '歌曲',
-                  hasSubmenu: false,
-                  onSelect: () {
-                    _musicService.setShuffleMode(PodShuffleMode.songs);
-                    notifyListeners();
-                  },
-                ),
-              ],
-            ),
-            PodMenuItem(
-              id: 'sound',
-              title: '滚轮音效',
-              subtitle: _soundEnabled ? '打开' : '关闭',
-              hasSubmenu: false,
-              onSelect: () {
-                _soundEnabled = !_soundEnabled;
-                notifyListeners();
-              },
-            ),
-            PodMenuItem(
-              id: 'haptics',
-              title: '触感反馈',
-              subtitle: _hapticsEnabled ? '打开' : '关闭',
-              hasSubmenu: false,
-              onSelect: () {
-                _hapticsEnabled = !_hapticsEnabled;
-                notifyListeners();
-              },
-            ),
-            PodMenuItem(
-              id: 'about',
-              title: '关于 LikePod',
-              hasSubmenu: false,
-              onSelect: () => _openAbout(),
-            ),
-          ],
+          subMenuItems: _settingsMenuItems,
         ),
-        PodMenuItem(
-          id: 'shuffle_songs_main',
-          title: '随机播放歌曲',
-          previewType: PreviewType.artwork,
-          previewIcon: Icons.shuffle_rounded,
-          hasSubmenu: false,
-          onSelect: () => shuffleAndPlayAll(),
-        ),
+        if (hasActivePlayback) _nowPlayingItem(id: 'main_now_playing'),
       ],
+    );
+  }
+
+  List<PodMenuItem> _settingsMenuItems() {
+    return [
+      PodMenuItem(
+        id: 'shell_theme',
+        title: '机身外观',
+        subtitle: _getShellName(_shellType),
+        subMenuItems: () => [
+          PodMenuItem(
+            id: 'theme_space_gray',
+            title: 'Space Gray',
+            hasSubmenu: false,
+            onSelect: () => setShellType(ShellThemeType.spaceGray),
+          ),
+          PodMenuItem(
+            id: 'theme_white',
+            title: 'Classic White',
+            hasSubmenu: false,
+            onSelect: () => setShellType(ShellThemeType.classicWhite),
+          ),
+          PodMenuItem(
+            id: 'theme_silver',
+            title: 'Metallic Silver',
+            hasSubmenu: false,
+            onSelect: () => setShellType(ShellThemeType.metallicSilver),
+          ),
+          PodMenuItem(
+            id: 'theme_black',
+            title: 'Stealth Black',
+            hasSubmenu: false,
+            onSelect: () => setShellType(ShellThemeType.stealthBlack),
+          ),
+          PodMenuItem(
+            id: 'theme_u2',
+            title: 'U2 Special Edition',
+            hasSubmenu: false,
+            onSelect: () => setShellType(ShellThemeType.u2Special),
+          ),
+        ],
+      ),
+      PodMenuItem(
+        id: 'music_folders',
+        title: '音乐文件夹',
+        subtitle: _musicFolders.isEmpty ? '未选择' : '${_musicFolders.length} 个目录',
+        subMenuItems: _musicFolderItems,
+      ),
+      PodMenuItem(
+        id: 'sound',
+        title: '滚轮音效',
+        subtitle: _soundEnabled ? '打开' : '关闭',
+        hasSubmenu: false,
+        onSelect: () {
+          _soundEnabled = !_soundEnabled;
+          _refreshSettingsMenu();
+          notifyListeners();
+          _schedulePersist(immediate: true);
+        },
+      ),
+      PodMenuItem(
+        id: 'haptics',
+        title: '触感反馈',
+        subtitle: _hapticsEnabled ? '打开' : '关闭',
+        hasSubmenu: false,
+        onSelect: () {
+          _hapticsEnabled = !_hapticsEnabled;
+          _refreshSettingsMenu();
+          notifyListeners();
+          _schedulePersist(immediate: true);
+        },
+      ),
+      PodMenuItem(
+        id: 'about',
+        title: '关于 LikePod',
+        hasSubmenu: false,
+        onSelect: () => _openAbout(),
+      ),
+    ];
+  }
+
+  /// The whitelist screen: every added folder plus the add-directory entry.
+  /// The library is empty until the user adds folders here.
+  List<PodMenuItem> _musicFolderItems() {
+    return [
+      if (_musicFolders.isEmpty)
+        PodMenuItem(
+          id: 'music_folders_empty',
+          title: '未添加目录，曲库为空',
+          hasSubmenu: false,
+        )
+      else
+        for (final folder in _musicFolders)
+          PodMenuItem(
+            id: 'music_folder_${folder.hashCode}',
+            title: MusicService.folderLabel(folder),
+            subtitle: '${_musicService.songsUnder(folder)} 首 · 轻点移除',
+            hasSubmenu: false,
+            onSelect: () => _removeMusicFolder(folder),
+          ),
+      PodMenuItem(
+        id: 'add_folder',
+        title: '添加目录',
+        subtitle: '浏览并选择',
+        subMenuItems: () => _folderBrowserItems(null),
+      ),
+    ];
+  }
+
+  /// Browser level for [dir]; null lists the storage volumes.
+  List<PodMenuItem> _folderBrowserItems(String? dir) {
+    if (dir == null) {
+      return [
+        for (final root in _musicService.storageRoots())
+          PodMenuItem(
+            id: 'folder_browser:$root',
+            title: MusicService.folderLabel(root),
+            subtitle: '${_musicService.songsUnder(root)} 首',
+            subMenuItems: () => _folderBrowserItems(root),
+          ),
+      ];
+    }
+    return [
+      PodMenuItem(
+        id: 'folder_pick:$dir',
+        title: '选择此目录',
+        subtitle: '${_musicService.songsUnder(dir)} 首',
+        hasSubmenu: false,
+        onSelect: () => _selectMusicFolder(dir),
+      ),
+      for (final child in _musicService.childFolders(dir))
+        PodMenuItem(
+          id: 'folder_browser:$child',
+          title: MusicService.baseName(child),
+          subtitle: '${_musicService.songsUnder(child)} 首',
+          subMenuItems: () => _folderBrowserItems(child),
+        ),
+    ];
+  }
+
+  /// Adds one folder to the whitelist, rescans, and closes the browser.
+  void _selectMusicFolder(String folder) {
+    if (_musicFolders.contains(folder)) return;
+    _musicFolders = List.unmodifiable([..._musicFolders, folder]);
+    _musicService.setMusicFolders(_musicFolders);
+    _schedulePersist(immediate: true);
+    unawaited(_rescanLibrary());
+    _popToMusicFoldersScreen();
+    _refreshSettingsMenu();
+    notifyListeners();
+  }
+
+  void _removeMusicFolder(String folder) {
+    _musicFolders = List.unmodifiable(
+      _musicFolders.where((f) => f != folder),
+    );
+    _musicService.setMusicFolders(_musicFolders);
+    _schedulePersist(immediate: true);
+    unawaited(_rescanLibrary());
+    _refreshSettingsMenu();
+    notifyListeners();
+  }
+
+  /// Pops every directory-browser level opened by 添加目录.
+  void _popToMusicFoldersScreen() {
+    while (_screenStack.length > 1 && _screenStack.last.id != 'music_folders') {
+      _screenStack.removeLast();
+      _indexStack.removeLast();
+    }
+  }
+
+  Future<void> _rescanLibrary() async {
+    await _musicService.scanLocalMusic();
+    if (_disposed) return;
+    _rebuildMenus();
+    _refreshSettingsMenu();
+  }
+
+  void _refreshSettingsMenu() {
+    for (var i = 0; i < _screenStack.length; i++) {
+      final id = _screenStack[i].id;
+      final List<PodMenuItem> items;
+      final String title;
+      if (id == 'settings') {
+        items = _settingsMenuItems();
+        title = '设置';
+      } else if (id == 'music_folders') {
+        items = _musicFolderItems();
+        title = '音乐文件夹';
+      } else if (id == 'add_folder') {
+        items = _folderBrowserItems(null);
+        title = '选择目录';
+      } else if (id.startsWith('folder_browser:')) {
+        final dir = id.substring('folder_browser:'.length);
+        items = _folderBrowserItems(dir);
+        title = MusicService.baseName(dir);
+      } else {
+        continue;
+      }
+      final last = items.isEmpty ? 0 : items.length - 1;
+      _screenStack[i] = PodMenuScreen(
+        id: id,
+        title: title,
+        items: items,
+        isSplitView: false,
+      );
+      if (i < _indexStack.length && _indexStack[i] > last) {
+        _indexStack[i] = last;
+      }
+    }
+  }
+
+  List<PodMenuItem> _musicMenuItems() {
+    return [
+      PodMenuItem(
+        id: 'music_cover_flow',
+        title: 'Cover Flow',
+        previewType: PreviewType.artwork,
+        previewIcon: Icons.view_carousel_rounded,
+        hasSubmenu: false,
+        onSelect: () => _openCoverFlow(),
+      ),
+      PodMenuItem(
+        id: 'playlists',
+        title: '播放列表',
+        previewType: PreviewType.artwork,
+        previewIcon: Icons.playlist_play_rounded,
+        subMenuItems: () => [
+          PodMenuItem(
+            id: 'all_songs_playlist',
+            title: '所有歌曲 (${_musicService.allSongs.length})',
+            hasSubmenu: false,
+            onSelect: () {
+              if (_musicService.allSongs.isNotEmpty) {
+                _playSong(
+                  _musicService.allSongs.first,
+                  queue: _musicService.allSongs,
+                );
+              }
+            },
+          ),
+          PodMenuItem(
+            id: 'rescan',
+            title: '重新扫描',
+            hasSubmenu: false,
+            onSelect: () async {
+              await _musicService.scanLocalMusic();
+              _rebuildMenus();
+            },
+          ),
+        ],
+      ),
+      PodMenuItem(
+        id: 'artists',
+        title: '表演者',
+        previewType: PreviewType.artwork,
+        previewIcon: Icons.person_rounded,
+        subMenuItems: () => _buildArtistsMenu(),
+      ),
+      PodMenuItem(
+        id: 'albums',
+        title: '专辑',
+        previewType: PreviewType.artwork,
+        previewIcon: Icons.album_rounded,
+        subMenuItems: () => _buildAlbumsMenu(),
+      ),
+      PodMenuItem(
+        id: 'songs',
+        title: '歌曲',
+        previewType: PreviewType.artwork,
+        previewIcon: Icons.audiotrack_rounded,
+        subMenuTwoLineRows: true,
+        subMenuItems: () => _buildSongsMenu(),
+      ),
+      PodMenuItem(
+        id: 'play_mode',
+        title: playModeLabel,
+        hasSubmenu: false,
+        onSelect: cyclePlayMode,
+      ),
+    ];
+  }
+
+  PodMenuItem _nowPlayingItem({required String id}) {
+    return PodMenuItem(
+      id: id,
+      title: '正在播放',
+      previewType: PreviewType.artwork,
+      previewIcon: Icons.play_arrow_rounded,
+      hasSubmenu: false,
+      onSelect: _openNowPlaying,
     );
   }
 
@@ -560,13 +886,7 @@ class PodState extends ChangeNotifier {
   }
 
   List<PodMenuItem> _buildStubMenu(String message) {
-    return [
-      PodMenuItem(
-        id: 'stub',
-        title: message,
-        hasSubmenu: false,
-      ),
-    ];
+    return [PodMenuItem(id: 'stub', title: message, hasSubmenu: false)];
   }
 
   List<PodMenuItem> _buildArtistsMenu() {
@@ -633,6 +953,8 @@ class PodState extends ChangeNotifier {
     _playbackProgress = 0.0;
     _loadArtworkForSong(song);
     _musicService.playSong(song, queue: queue);
+    _refreshPlaybackMenus();
+    _schedulePersist(immediate: true);
     _openNowPlaying();
   }
 
@@ -644,7 +966,7 @@ class PodState extends ChangeNotifier {
     }
     final bytes = await _musicService.getArtwork(song.albumId);
     _currentArtworkBytes = bytes;
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 
   String _getShellName(ShellThemeType type) {
@@ -659,50 +981,56 @@ class PodState extends ChangeNotifier {
         return 'Silver';
       case ShellThemeType.u2Special:
         return 'U2 Edition';
-      case ShellThemeType.sepiaGold:
-        return 'Sepia Gold';
     }
   }
 
-  String _getScreenName(ScreenThemeType type) {
-    switch (type) {
-      case ScreenThemeType.colorLcd:
-        return 'Color LCD';
-      case ScreenThemeType.sepiaRetro:
-        return 'Warm Sepia';
-      case ScreenThemeType.monochromeGreen:
-        return 'Mono Green';
-      case ScreenThemeType.darkOled:
-        return 'Dark OLED';
-    }
+  /// The row title itself is the active mode: 随机播放 → 单曲循环 → 顺序播放.
+  String get playModeLabel {
+    if (_musicService.shuffleMode == PodShuffleMode.songs) return '随机播放';
+    if (_musicService.repeatMode == PodRepeatMode.one) return '单曲循环';
+    return '顺序播放';
   }
 
-  String _getRepeatName(PodRepeatMode mode) {
-    switch (mode) {
-      case PodRepeatMode.off:
-        return '关闭';
-      case PodRepeatMode.all:
-        return '全部歌曲';
-      case PodRepeatMode.one:
-        return '单曲';
+  void cyclePlayMode() {
+    if (_musicService.shuffleMode == PodShuffleMode.songs) {
+      _musicService.setShuffleMode(PodShuffleMode.off);
+      _musicService.setRepeatMode(PodRepeatMode.one);
+    } else if (_musicService.repeatMode == PodRepeatMode.one) {
+      _musicService.setShuffleMode(PodShuffleMode.off);
+      _musicService.setRepeatMode(PodRepeatMode.all);
+    } else {
+      _musicService.setShuffleMode(PodShuffleMode.songs);
+      _musicService.setRepeatMode(PodRepeatMode.all);
     }
-  }
-
-  void shuffleAndPlayAll() {
-    _musicService.shuffleAndPlayAll();
-    _openNowPlaying();
+    _refreshPlaybackMenus();
+    notifyListeners();
+    _schedulePersist(immediate: true);
   }
 
   // Rotary Wheel Actions
   void onRotate(int stepDelta) {
     if (stepDelta == 0) return;
 
+    // 0. Quality-mode picker: the ring moves the highlight.
+    if (_modePopupVisible) {
+      final next = (_modePopupIndex + stepDelta).clamp(0, 1);
+      if (next != _modePopupIndex) {
+        _modePopupIndex = next;
+        _soundService.playTick(
+          soundEnabled: _soundEnabled,
+          hapticsEnabled: _hapticsEnabled,
+        );
+        notifyListeners();
+      }
+      return;
+    }
+
     // 1. Cover Flow rotary album navigation
     if (currentScreen.id == 'cover_flow_view' && _albums.isNotEmpty) {
       final newIdx = (_coverFlowIndex + stepDelta).clamp(0, _albums.length - 1);
       if (newIdx != _coverFlowIndex) {
         _coverFlowIndex = newIdx;
-        _soundService.playClick(
+        _soundService.playTick(
           soundEnabled: _soundEnabled,
           hapticsEnabled: _hapticsEnabled,
         );
@@ -717,9 +1045,11 @@ class PodState extends ChangeNotifier {
         final currentVol = _musicService.volume;
         final newVol = (currentVol + stepDelta * 0.04).clamp(0.0, 1.0);
         _musicService.setVolume(newVol);
+        _savedVolume = newVol;
         _isShowingVolume = true;
+        _schedulePersist();
 
-        _soundService.playClick(
+        _soundService.playTick(
           soundEnabled: _soundEnabled,
           hapticsEnabled: _hapticsEnabled,
         );
@@ -733,8 +1063,11 @@ class PodState extends ChangeNotifier {
         notifyListeners();
         return;
       } else if (_nowPlayingMode == NowPlayingSubMode.scrub) {
-        _scrubPositionSeconds = (_scrubPositionSeconds + stepDelta * 4).clamp(0, _currentDurationSeconds);
-        _soundService.playClick(
+        _scrubPositionSeconds = (_scrubPositionSeconds + stepDelta * 4).clamp(
+          0,
+          _currentDurationSeconds,
+        );
+        _soundService.playTick(
           soundEnabled: _soundEnabled,
           hapticsEnabled: _hapticsEnabled,
         );
@@ -752,7 +1085,8 @@ class PodState extends ChangeNotifier {
           final cur = _songRatings[song.id] ?? 0;
           final updated = (cur + stepDelta).clamp(0, 5);
           _songRatings[song.id] = updated;
-          _soundService.playClick(
+          _schedulePersist(immediate: true);
+          _soundService.playTick(
             soundEnabled: _soundEnabled,
             hapticsEnabled: _hapticsEnabled,
           );
@@ -777,7 +1111,7 @@ class PodState extends ChangeNotifier {
 
     if (nextIndex != currentIndex) {
       _indexStack[_indexStack.length - 1] = nextIndex;
-      _soundService.playClick(
+      _soundService.playTick(
         soundEnabled: _soundEnabled,
         hapticsEnabled: _hapticsEnabled,
       );
@@ -785,10 +1119,46 @@ class PodState extends ChangeNotifier {
     }
   }
 
+  /// A long press on the click-wheel center dot opens the quality-mode
+  /// picker.
+  void onCenterLongPress() {
+    _soundService.playSelect(
+      soundEnabled: _soundEnabled,
+      hapticsEnabled: _hapticsEnabled,
+    );
+    _modePopupIndex = _qualityModeHigh ? 0 : 1;
+    _modePopupVisible = true;
+    notifyListeners();
+  }
+
+  void _closeModePopup({required bool apply}) {
+    if (!_modePopupVisible) return;
+    _modePopupVisible = false;
+    if (apply) {
+      final high = _modePopupIndex == 0;
+      if (high != _qualityModeHigh) {
+        _qualityModeHigh = high;
+        unawaited(_musicService.setQualityMode(high));
+        _schedulePersist(immediate: true);
+      }
+    }
+    notifyListeners();
+  }
+
   void onSelect() {
+    // 0. Quality-mode picker: the center dot confirms the highlighted row.
+    if (_modePopupVisible) {
+      _soundService.playSelect(
+        soundEnabled: _soundEnabled,
+        hapticsEnabled: _hapticsEnabled,
+      );
+      _closeModePopup(apply: true);
+      return;
+    }
+
     // 1. Now Playing: Cycle Center Button Sub-Modes (Volume -> Scrub -> Rating -> Volume)
     if (currentScreen.id == 'now_playing_view') {
-      _soundService.playConfirm(
+      _soundService.playSelect(
         soundEnabled: _soundEnabled,
         hapticsEnabled: _hapticsEnabled,
       );
@@ -824,7 +1194,7 @@ class PodState extends ChangeNotifier {
     // 2. Cover Flow: Center Select plays focused album and opens Now Playing.
     // Stack: Now Playing -> Cover Flow -> Music -> iPod main
     if (currentScreen.id == 'cover_flow_view' && _albums.isNotEmpty) {
-      _soundService.playConfirm(
+      _soundService.playSelect(
         soundEnabled: _soundEnabled,
         hapticsEnabled: _hapticsEnabled,
       );
@@ -839,7 +1209,7 @@ class PodState extends ChangeNotifier {
     if (items.isEmpty) return;
 
     final item = items[currentSelectedIndex];
-    _soundService.playConfirm(
+    _soundService.playSelect(
       soundEnabled: _soundEnabled,
       hapticsEnabled: _hapticsEnabled,
     );
@@ -861,13 +1231,31 @@ class PodState extends ChangeNotifier {
     }
   }
 
+  /// Hardware back matches MENU. At the root menu it does not leave the app.
+  bool handleSystemBack() {
+    if (_screenStack.length > 1) {
+      onMenu();
+      return true;
+    }
+    return false;
+  }
+
   void onMenu() {
+    // The quality-mode picker closes first, like a modal sheet.
+    if (_modePopupVisible) {
+      _soundService.playSelect(
+        soundEnabled: _soundEnabled,
+        hapticsEnabled: _hapticsEnabled,
+      );
+      _closeModePopup(apply: false);
+      return;
+    }
     _volumeBarTimer?.cancel();
     _subModeTimer?.cancel();
     _isShowingVolume = false;
     _nowPlayingMode = NowPlayingSubMode.volume;
 
-    _soundService.playConfirm(
+    _soundService.playSelect(
       soundEnabled: _soundEnabled,
       hapticsEnabled: _hapticsEnabled,
     );
@@ -880,7 +1268,9 @@ class PodState extends ChangeNotifier {
   }
 
   void onPlayPause() {
-    _soundService.playConfirm(
+    // Transport keys are ignored while the mode picker is up.
+    if (_modePopupVisible) return;
+    _soundService.playSelect(
       soundEnabled: _soundEnabled,
       hapticsEnabled: _hapticsEnabled,
     );
@@ -888,7 +1278,8 @@ class PodState extends ChangeNotifier {
   }
 
   void onNext() {
-    _soundService.playClick(
+    if (_modePopupVisible) return;
+    _soundService.playTick(
       soundEnabled: _soundEnabled,
       hapticsEnabled: _hapticsEnabled,
     );
@@ -896,7 +1287,8 @@ class PodState extends ChangeNotifier {
   }
 
   void onPrevious() {
-    _soundService.playClick(
+    if (_modePopupVisible) return;
+    _soundService.playTick(
       soundEnabled: _soundEnabled,
       hapticsEnabled: _hapticsEnabled,
     );
@@ -907,7 +1299,7 @@ class PodState extends ChangeNotifier {
     if (index >= 0 && index < currentScreen.items.length) {
       if (_indexStack.isNotEmpty && _indexStack.last != index) {
         _indexStack[_indexStack.length - 1] = index;
-        _soundService.playClick(
+        _soundService.playTick(
           soundEnabled: _soundEnabled,
           hapticsEnabled: _hapticsEnabled,
         );
@@ -919,11 +1311,7 @@ class PodState extends ChangeNotifier {
   void setShellType(ShellThemeType type) {
     _shellType = type;
     notifyListeners();
-  }
-
-  void setScreenType(ScreenThemeType type) {
-    _screenType = type;
-    notifyListeners();
+    _schedulePersist(immediate: true);
   }
 
   void _openNowPlaying() {
@@ -996,12 +1384,11 @@ class PodState extends ChangeNotifier {
     notifyListeners();
   }
 
-
   void _initBatteryMonitor() {
     Future<void> refresh() async {
       try {
         final level = await _musicService.getBatteryLevel();
-        if (level != _batteryLevel) {
+        if (!_disposed && level != _batteryLevel) {
           _batteryLevel = level;
           notifyListeners();
         }
@@ -1010,12 +1397,25 @@ class PodState extends ChangeNotifier {
 
     refresh();
     _batteryTimer?.cancel();
-    _batteryTimer = Timer.periodic(const Duration(seconds: 60), (_) => refresh());
+    _batteryTimer = Timer.periodic(
+      const Duration(seconds: 60),
+      (_) => refresh(),
+    );
   }
+
   @override
   void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    WidgetsBinding.instance.removeObserver(this);
+    _batteryTimer?.cancel();
     _volumeBarTimer?.cancel();
     _subModeTimer?.cancel();
+    _persistTimer?.cancel();
+    final store = _store;
+    if (store != null && !_loadingSettings && !_holdPersist) {
+      unawaited(store.save(_snapshot()));
+    }
     _playerStateSub?.cancel();
     _positionSub?.cancel();
     _durationSub?.cancel();

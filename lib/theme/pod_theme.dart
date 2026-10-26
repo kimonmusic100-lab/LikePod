@@ -6,19 +6,10 @@ enum ShellThemeType {
   stealthBlack,
   metallicSilver,
   u2Special,
-  sepiaGold,
-}
-
-enum ScreenThemeType {
-  colorLcd,
-  sepiaRetro,
-  monochromeGreen,
-  darkOled,
 }
 
 class PodTheme {
   final ShellThemeType shellType;
-  final ScreenThemeType screenType;
 
   final String name;
   final Color chassisPrimary;
@@ -46,7 +37,6 @@ class PodTheme {
 
   const PodTheme({
     required this.shellType,
-    required this.screenType,
     required this.name,
     required this.chassisPrimary,
     required this.chassisSecondary,
@@ -70,7 +60,8 @@ class PodTheme {
     required this.lcdBatteryBorder,
   });
 
-  static PodTheme getTheme(ShellThemeType shell, ScreenThemeType screen) {
+  /// The screen is always the classic color LCD; only the shell varies.
+  static PodTheme getTheme(ShellThemeType shell) {
     // Shell properties
     Color chassis1;
     Color chassis2;
@@ -136,103 +127,10 @@ class PodTheme {
         wheelTxt = const Color(0xFFFFFFFF);
         centerBtn = const Color(0xFF161618);
         break;
-
-      case ShellThemeType.sepiaGold:
-        themeName = 'Sepia Nostalgia';
-        chassis1 = const Color(0xFFEADBCA);
-        chassis2 = const Color(0xFFCDBBA5);
-        bezel = const Color(0xFFB5A18B);
-        wheel = const Color(0xFFDFD0BE);
-        wheelRim = const Color(0xFFC5B49F);
-        wheelTxt = const Color(0xFF755B44);
-        centerBtn = const Color(0xFFEAE0D3);
-        break;
-    }
-
-    // Screen properties
-    Color bg;
-    Color hStart;
-    Color hEnd;
-    Color hTxt;
-    Color hBorder;
-    Color txt;
-    Color subTxt;
-    Color hlStart;
-    Color hlEnd;
-    Color hlTxt;
-    Color div;
-    Color batFill;
-    Color batBorder;
-
-    switch (screen) {
-      case ScreenThemeType.colorLcd:
-        bg = const Color(0xFFFFFFFF);
-        hStart = const Color(0xFFEDEDF0);
-        hEnd = const Color(0xFFCBCBD0);
-        hTxt = const Color(0xFF111111);
-        hBorder = const Color(0xFF9898A0);
-        txt = const Color(0xFF1A1A1A);
-        subTxt = const Color(0xFF7A7A7A);
-        hlStart = const Color(0xFF3C7FE8); // Classic blue gradient highlight
-        hlEnd = const Color(0xFF1B55B8);
-        hlTxt = const Color(0xFFFFFFFF);
-        div = const Color(0xFFE2E2E6);
-        batFill = const Color(0xFF4CD964);
-        batBorder = const Color(0xFF666666);
-        break;
-
-      case ScreenThemeType.sepiaRetro:
-        bg = const Color(0xFFF5EFE4);
-        hStart = const Color(0xFFE8DDCA);
-        hEnd = const Color(0xFFD8C7AD);
-        hTxt = const Color(0xFF4A3828);
-        hBorder = const Color(0xFFB8A48A);
-        txt = const Color(0xFF463524);
-        subTxt = const Color(0xFF8B7762);
-        hlStart = const Color(0xFFB37B42);
-        hlEnd = const Color(0xFF865422);
-        hlTxt = const Color(0xFFFFF7ED);
-        div = const Color(0xFFDFD1BE);
-        batFill = const Color(0xFF8F9456);
-        batBorder = const Color(0xFF6B5843);
-        break;
-
-      case ScreenThemeType.monochromeGreen:
-        bg = const Color(0xFFBDC7A7); // Backlit green LCD
-        hStart = const Color(0xFFAFB99A);
-        hEnd = const Color(0xFF9BA785);
-        hTxt = const Color(0xFF28341E);
-        hBorder = const Color(0xFF7E8A69);
-        txt = const Color(0xFF25301B);
-        subTxt = const Color(0xFF566548);
-        hlStart = const Color(0xFF38472B);
-        hlEnd = const Color(0xFF25321B);
-        hlTxt = const Color(0xFFD4E0BE);
-        div = const Color(0xFFA3AF8C);
-        batFill = const Color(0xFF38472B);
-        batBorder = const Color(0xFF38472B);
-        break;
-
-      case ScreenThemeType.darkOled:
-        bg = const Color(0xFF121214);
-        hStart = const Color(0xFF242428);
-        hEnd = const Color(0xFF18181A);
-        hTxt = const Color(0xFFE2E2E8);
-        hBorder = const Color(0xFF333338);
-        txt = const Color(0xFFE8E8EE);
-        subTxt = const Color(0xFF868690);
-        hlStart = const Color(0xFF2D62B5);
-        hlEnd = const Color(0xFF193F7D);
-        hlTxt = const Color(0xFFFFFFFF);
-        div = const Color(0xFF25252A);
-        batFill = const Color(0xFF34C759);
-        batBorder = const Color(0xFF888890);
-        break;
     }
 
     return PodTheme(
       shellType: shell,
-      screenType: screen,
       name: themeName,
       chassisPrimary: chassis1,
       chassisSecondary: chassis2,
@@ -241,19 +139,19 @@ class PodTheme {
       wheelRim: wheelRim,
       wheelText: wheelTxt,
       centerButton: centerBtn,
-      lcdBackground: bg,
-      lcdHeaderStart: hStart,
-      lcdHeaderEnd: hEnd,
-      lcdHeaderText: hTxt,
-      lcdHeaderBorder: hBorder,
-      lcdText: txt,
-      lcdSubtext: subTxt,
-      lcdHighlightStart: hlStart,
-      lcdHighlightEnd: hlEnd,
-      lcdHighlightText: hlTxt,
-      lcdDivider: div,
-      lcdBatteryFill: batFill,
-      lcdBatteryBorder: batBorder,
+      lcdBackground: const Color(0xFFFFFFFF),
+      lcdHeaderStart: const Color(0xFFEDEDF0),
+      lcdHeaderEnd: const Color(0xFFCBCBD0),
+      lcdHeaderText: const Color(0xFF111111),
+      lcdHeaderBorder: const Color(0xFF9898A0),
+      lcdText: const Color(0xFF1A1A1A),
+      lcdSubtext: const Color(0xFF7A7A7A),
+      lcdHighlightStart: const Color(0xFF1A86D0),
+      lcdHighlightEnd: const Color(0xFF1874C2),
+      lcdHighlightText: const Color(0xFFFFFFFF),
+      lcdDivider: const Color(0xFFE2E2E6),
+      lcdBatteryFill: const Color(0xFF4CD964),
+      lcdBatteryBorder: const Color(0xFF666666),
     );
   }
 }

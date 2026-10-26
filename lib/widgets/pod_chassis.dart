@@ -1,9 +1,36 @@
 import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import '../providers/pod_state.dart';
 import 'click_wheel.dart';
 import 'lcd_screen.dart';
+
+/// Play window uses a 3:4 frame, then keeps that width and uses 5/6 of the height.
+class _LcdSize {
+  final double width;
+  final double height;
+  const _LcdSize(this.width, this.height);
+}
+
+_LcdSize _lcdWindow(double maxWidth, double maxHeight) {
+  if (maxWidth <= 0 || maxHeight <= 0) return const _LcdSize(0, 0);
+  // Fit a 3:4 window in the space above the click wheel.
+  final available = max(1.0, min(maxHeight * 0.70, maxHeight - 80));
+  var width = maxWidth;
+  var height = width * 4 / 3;
+  if (height > available) {
+    height = available;
+    width = height * 3 / 4;
+    if (width > maxWidth) {
+      width = maxWidth;
+      height = min(width * 4 / 3, available);
+    }
+  }
+  // Shorten that height by one sixth; the width stays.
+  return _LcdSize(width, height * 5 / 6);
+}
 
 class PodChassis extends StatelessWidget {
   const PodChassis({super.key});
@@ -22,12 +49,6 @@ class PodChassis extends StatelessWidget {
         // On mobile phones (e.g. OPPO Find X9s Pro 19.5:9), fill 100% full screen edge-to-edge!
         final bool isDesktopWide = totalWidth > 540;
         final double effectiveWidth = isDesktopWide ? 460.0 : totalWidth;
-
-        // Vertical space distribution tailored for modern 19.5:9 / 20:9 phone displays
-        // LCD Screen takes ~42% of available height
-        final double screenAreaHeight = (totalHeight * 0.42).clamp(240.0, 380.0);
-        // Click Wheel diameter scales comfortably to the user's thumb zone
-        final double wheelDiameter = min(effectiveWidth * 0.72, totalHeight * 0.44).clamp(210.0, 275.0);
 
         return Center(
           child: Container(
@@ -61,37 +82,57 @@ class PodChassis extends StatelessWidget {
             ),
             child: SafeArea(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                child: Column(
-                  children: [
-                    // 1. LCD Screen Display (Top half of phone)
-                    SizedBox(
-                      height: screenAreaHeight,
-                      width: double.infinity,
-                      child: LcdScreen(theme: theme),
-                    ),
-
-                    // 2. Click Wheel Section (Bottom half of phone, thumb-friendly)
-                    Expanded(
-                      child: Center(
-                        child: SizedBox(
-                          width: wheelDiameter,
-                          height: wheelDiameter,
-                          child: ClickWheel(
-                            theme: theme,
-                            onRotate: pod.onRotate,
-                            onSelect: pod.onSelect,
-                            onMenu: pod.onMenu,
-                            onPlayPause: pod.onPlayPause,
-                            onPrevious: pod.onPrevious,
-                            onNext: pod.onNext,
+                padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+                child: LayoutBuilder(
+                  builder: (context, inner) {
+                    final lcd = _lcdWindow(inner.maxWidth, inner.maxHeight);
+                    final wheelRoom = max(
+                      0.0,
+                      inner.maxHeight - lcd.height - 8,
+                    );
+                    var wheelDiameter = min(
+                      inner.maxWidth * 0.70,
+                      min(wheelRoom * 0.86, 280.0),
+                    );
+                    if (wheelRoom >= 200 && wheelDiameter < 200) {
+                      wheelDiameter = min(200.0, wheelRoom);
+                    }
+                    if (wheelDiameter > wheelRoom) wheelDiameter = wheelRoom;
+                    return Column(
+                      children: [
+                        SizedBox(
+                          height: lcd.height,
+                          width: double.infinity,
+                          child: Center(
+                            child: SizedBox(
+                              width: lcd.width,
+                              height: lcd.height,
+                              child: LcdScreen(theme: theme),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 12),
-                  ],
+                        Expanded(
+                          child: Align(
+                            alignment: const Alignment(0, 0.22),
+                            child: SizedBox(
+                              width: wheelDiameter,
+                              height: wheelDiameter,
+                              child: ClickWheel(
+                                theme: theme,
+                                onRotate: pod.onRotate,
+                                onSelect: pod.onSelect,
+                                onMenu: pod.onMenu,
+                                onPlayPause: pod.onPlayPause,
+                                onPrevious: pod.onPrevious,
+                                onNext: pod.onNext,
+                                onCenterLongPress: pod.onCenterLongPress,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
             ),

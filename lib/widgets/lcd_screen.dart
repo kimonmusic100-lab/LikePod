@@ -1,19 +1,25 @@
+import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
+
 import '../models/album_model.dart';
 import '../models/menu_item.dart';
 import '../providers/pod_state.dart';
-import '../services/music_service.dart';
+import '../services/output_probe.dart';
+import '../theme/classic_glass.dart';
 import '../theme/pod_theme.dart';
+import 'bluetooth_mark.dart';
+import 'cover_flow_pose.dart';
+import 'edge_scroll.dart';
 
 class LcdScreen extends StatefulWidget {
   final PodTheme theme;
 
-  const LcdScreen({
-    super.key,
-    required this.theme,
-  });
+  const LcdScreen({super.key, required this.theme});
 
   @override
   State<LcdScreen> createState() => _LcdScreenState();
@@ -21,6 +27,13 @@ class LcdScreen extends StatefulWidget {
 
 class _LcdScreenState extends State<LcdScreen> {
   final ScrollController _scrollController = ScrollController();
+  String? _trackedScreenId;
+  int? _anchoredIndex;
+
+  static const double _menuRowHeight = 32;
+  static const double _songRowHeight = 58;
+  static const double _meterSideSlot = 42;
+  static const double _meterLabelGap = 4;
 
   @override
   void dispose() {
@@ -28,13 +41,35 @@ class _LcdScreenState extends State<LcdScreen> {
     super.dispose();
   }
 
-  void _scrollToIndex(int index, int totalItems, {double itemHeight = 32.0}) {
+  void _scrollToIndex(
+    String screenId,
+    int index,
+    int totalItems, {
+    required double itemHeight,
+  }) {
     if (!_scrollController.hasClients || totalItems == 0) return;
-    final targetOffset = (index * itemHeight) - (itemHeight * 2);
+    final position = _scrollController.position;
+    if (_trackedScreenId != screenId) {
+      _trackedScreenId = screenId;
+      _anchoredIndex = null;
+      if (position.pixels != 0) {
+        _scrollController.jumpTo(0);
+      }
+    }
+    final target = EdgeScroll.targetOffset(
+      index: index,
+      previousIndex: _anchoredIndex,
+      itemHeight: itemHeight,
+      viewport: position.viewportDimension,
+      currentOffset: _scrollController.position.pixels,
+      maxOffset: position.maxScrollExtent,
+    );
+    _anchoredIndex = index;
+    if ((target - _scrollController.position.pixels).abs() < 0.5) return;
     _scrollController.animateTo(
-      targetOffset.clamp(0.0, _scrollController.position.maxScrollExtent),
-      duration: const Duration(milliseconds: 120),
-      curve: Curves.easeOut,
+      target,
+      duration: const Duration(milliseconds: 80),
+      curve: Curves.linear,
     );
   }
 
@@ -44,20 +79,21 @@ class _LcdScreenState extends State<LcdScreen> {
     final screen = pod.currentScreen;
     final selectedIdx = pod.currentSelectedIndex;
 
-    // Auto scroll list when wheel rotates
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollToIndex(selectedIdx, screen.items.length, itemHeight: screen.useTwoLineRows ? 40.0 : 32.0);
+      if (!mounted) return;
+      _scrollToIndex(
+        screen.id,
+        selectedIdx,
+        screen.items.length,
+        itemHeight: screen.useTwoLineRows ? _songRowHeight : _menuRowHeight,
+      );
     });
 
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8.0),
-        border: Border.all(
-          color: widget.theme.lcdHeaderBorder,
-          width: 1.5,
-        ),
+        border: Border.all(color: widget.theme.lcdHeaderBorder, width: 1.5),
         boxShadow: [
-          // Inner display recess shadow
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.18),
             blurRadius: 4,
@@ -69,15 +105,22 @@ class _LcdScreenState extends State<LcdScreen> {
         borderRadius: BorderRadius.circular(6.5),
         child: Container(
           color: widget.theme.lcdBackground,
-          child: Column(
+          child: Stack(
             children: [
-              // 1. Classic iPod Status Bar
-              _buildStatusBar(pod),
-
-              // 2. Screen Content (Split View or Full Screen)
-              Expanded(
-                child: _buildScreenContent(context, pod, screen, selectedIdx),
+              Column(
+                children: [
+                  _buildStatusBar(pod),
+                  Expanded(
+                    child: _buildScreenContent(
+                      context,
+                      pod,
+                      screen,
+                      selectedIdx,
+                    ),
+                  ),
+                ],
               ),
+              if (pod.modePopupVisible) _buildModePopup(pod),
             ],
           ),
         ),
@@ -85,10 +128,155 @@ class _LcdScreenState extends State<LcdScreen> {
     );
   }
 
-  Widget _buildStatusBar(PodState pod) {
-    // Classic layout: title left; blue play/pause + battery on the right.
-    const playBlue = Color(0xFF2BB0E8);
+  /// Modal quality-mode picker opened by a double tap on the wheel's center
+  /// dot. The ring moves the highlight, the center dot confirms, MENU
+  /// dismisses without changing anything.
+  Widget _buildModePopup(PodState pod) {
+    const options = [
+      ('高品质模式', 'USB 直连 · 独占解码'),
+      ('标准模式', '系统混音'),
+    ];
+    return Positioned.fill(
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: 0.30),
+        child: Center(
+          child: Container(
+            width: 216,
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: widget.theme.lcdBackground,
+              border: Border.all(
+                color: widget.theme.lcdHeaderBorder,
+                width: 1,
+              ),
+              borderRadius: BorderRadius.circular(10),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.35),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  height: 26,
+                  width: double.infinity,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        widget.theme.lcdHeaderStart,
+                        widget.theme.lcdHeaderEnd,
+                      ],
+                    ),
+                    border: Border(
+                      bottom: BorderSide(
+                        color: widget.theme.lcdHeaderBorder,
+                        width: 1,
+                      ),
+                    ),
+                  ),
+                  child: Text(
+                    '输出模式',
+                    style: TextStyle(
+                      color: widget.theme.lcdHeaderText,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      shadows: _engravedShadows(),
+                    ),
+                  ),
+                ),
+                for (var i = 0; i < options.length; i++)
+                  _buildModePopupRow(pod, i, options[i]),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
+  Widget _buildModePopupRow(PodState pod, int index, (String, String) option) {
+    final selected = pod.modePopupIndex == index;
+    return Container(
+      height: 44,
+      width: double.infinity,
+      decoration: BoxDecoration(gradient: selected ? ClassicGlass.fill : null),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            option.$1,
+            style: TextStyle(
+              color: selected ? Colors.white : widget.theme.lcdText,
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 1),
+          Text(
+            option.$2,
+            style: TextStyle(
+              color: selected
+                  ? Colors.white.withValues(alpha: 0.85)
+                  : widget.theme.lcdSubtext,
+              fontSize: 10,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool get _lightStatusMetal =>
+      widget.theme.lcdHeaderStart.computeLuminance() > 0.45;
+
+  List<Shadow> _engravedShadows() {
+    if (_lightStatusMetal) {
+      return const [
+        Shadow(color: Color(0xF2FFFFFF), offset: Offset(0, 1), blurRadius: 0),
+        Shadow(
+          color: Color(0x42000000),
+          offset: Offset(0, -0.7),
+          blurRadius: 0.3,
+        ),
+      ];
+    }
+    return const [
+      Shadow(color: Color(0xCC000000), offset: Offset(0, -1), blurRadius: 0.2),
+      Shadow(color: Color(0x38FFFFFF), offset: Offset(0, 1), blurRadius: 0),
+    ];
+  }
+
+  /// Light lip under dark metal type, dark lip above light type: pressed in.
+  Widget _engravedGlyph(Widget child) {
+    final lip = _lightStatusMetal
+        ? const Color(0xE6FFFFFF)
+        : const Color(0x99000000);
+    final offset = _lightStatusMetal ? const Offset(0, 1) : const Offset(0, -1);
+    return Stack(
+      alignment: Alignment.center,
+      clipBehavior: Clip.none,
+      children: [
+        Transform.translate(
+          offset: offset,
+          child: ColorFiltered(
+            colorFilter: ColorFilter.mode(lip, BlendMode.srcIn),
+            child: child,
+          ),
+        ),
+        child,
+      ],
+    );
+  }
+
+  Widget _buildStatusBar(PodState pod) {
+    final engraved = _engravedShadows();
     return Container(
       height: 24,
       decoration: BoxDecoration(
@@ -96,16 +284,10 @@ class _LcdScreenState extends State<LcdScreen> {
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [
-            widget.theme.lcdHeaderStart,
-            widget.theme.lcdHeaderEnd,
-          ],
+          colors: [widget.theme.lcdHeaderStart, widget.theme.lcdHeaderEnd],
         ),
         border: Border(
-          bottom: BorderSide(
-            color: widget.theme.lcdHeaderBorder,
-            width: 1.0,
-          ),
+          bottom: BorderSide(color: widget.theme.lcdHeaderBorder, width: 1.0),
         ),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -122,65 +304,108 @@ class _LcdScreenState extends State<LcdScreen> {
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
                 letterSpacing: 0.3,
+                shadows: engraved,
               ),
             ),
           ),
-          if (pod.hasActivePlayback) ...[
-            Icon(
-              pod.isPlaying ? Icons.play_arrow : Icons.pause,
-              size: 14,
-              color: playBlue,
+          _StatusClock(color: widget.theme.lcdHeaderText, shadows: engraved),
+          Expanded(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (isBluetoothRoute(pod.outputSnapshot.route)) ...[
+                  _engravedGlyph(
+                    BluetoothMark(color: widget.theme.lcdHeaderText),
+                  ),
+                  const SizedBox(width: 5),
+                ],
+                if (pod.hasActivePlayback) ...[
+                  _engravedGlyph(_buildPlaybackGlyph(pod.isPlaying)),
+                  const SizedBox(width: 6),
+                ],
+                _engravedGlyph(_buildBatteryWidget(pod)),
+              ],
             ),
-            const SizedBox(width: 6),
-          ],
-          _buildBatteryWidget(pod),
+          ),
         ],
       ),
     );
   }
 
+  Widget _buildPlaybackGlyph(bool playing) {
+    if (!playing) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _glassPill(3.2, 10),
+          const SizedBox(width: 2),
+          _glassPill(3.2, 10),
+        ],
+      );
+    }
+    return const ClipPath(
+      clipper: _PlayTriangleClipper(),
+      child: SizedBox(
+        width: 11,
+        height: 11,
+        child: DecoratedBox(
+          decoration: BoxDecoration(gradient: ClassicGlass.progressFill),
+        ),
+      ),
+    );
+  }
+
+  Widget _glassPill(double width, double height) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        gradient: ClassicGlass.progressFill,
+        borderRadius: BorderRadius.circular(0.8),
+      ),
+    );
+  }
+
   Widget _buildBatteryWidget(PodState pod) {
-    final level = pod.batteryLevel.clamp(0, 100);
+    final level = pod.batteryLevel.clamp(0, 100) / 100.0;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 22,
-          height: 10,
+          width: 23,
+          height: 11,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(2),
-            border: Border.all(
-              color: widget.theme.lcdBatteryBorder,
-              width: 1.0,
-            ),
+            border: Border.all(color: const Color(0xFF2E6E40), width: 1),
           ),
-          padding: const EdgeInsets.all(1.0),
-          child: FractionallySizedBox(
-            alignment: Alignment.centerLeft,
-            widthFactor: level / 100.0,
-            child: Container(
-              decoration: BoxDecoration(
-                color: widget.theme.lcdBatteryFill,
-                borderRadius: BorderRadius.circular(1),
+          padding: const EdgeInsets.all(1),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(1),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FractionallySizedBox(
+                widthFactor: level,
+                heightFactor: 1,
+                child: const DecoratedBox(
+                  decoration: BoxDecoration(gradient: ClassicGlass.batteryFill),
+                ),
               ),
             ),
           ),
         ),
         Container(
-          width: 1.5,
-          height: 4,
-          margin: const EdgeInsets.only(left: 0.5),
-          decoration: BoxDecoration(
-            color: widget.theme.lcdBatteryBorder,
-            borderRadius: const BorderRadius.only(
-              topRight: Radius.circular(1),
-              bottomRight: Radius.circular(1),
-            ),
+          width: 2,
+          height: 5,
+          margin: const EdgeInsets.only(left: 0.6),
+          decoration: const BoxDecoration(
+            gradient: ClassicGlass.batteryFill,
+            borderRadius: BorderRadius.horizontal(right: Radius.circular(1)),
           ),
         ),
       ],
     );
   }
+
   Widget _buildScreenContent(
     BuildContext context,
     PodState pod,
@@ -191,7 +416,7 @@ class _LcdScreenState extends State<LcdScreen> {
       return _buildNowPlayingView(pod);
     }
     if (screen.id == 'about_view') {
-      return _buildAboutView(pod);
+      return _buildAboutView();
     }
     if (screen.id == 'cover_flow_view') {
       return _buildCoverFlowView(pod);
@@ -200,17 +425,9 @@ class _LcdScreenState extends State<LcdScreen> {
     if (screen.isSplitView) {
       return Row(
         children: [
-          // Left Column: Menu Items List
-          Expanded(
-            flex: 9,
-            child: _buildMenuList(pod, screen, selectedIdx),
-          ),
-          // Vertical Divider
-          Container(
-            width: 1,
-            color: widget.theme.lcdDivider,
-          ),
-          // Right Column: Dynamic Preview Window (~55% like Classic)
+          Expanded(flex: 9, child: _buildMenuList(pod, screen, selectedIdx)),
+          Container(width: 1, color: widget.theme.lcdDivider),
+          // Preview takes a little over half the row.
           Expanded(
             flex: 11,
             child: _buildDynamicPreview(pod, screen, selectedIdx),
@@ -219,13 +436,12 @@ class _LcdScreenState extends State<LcdScreen> {
       );
     }
 
-    // Full width menu list
     return _buildMenuList(pod, screen, selectedIdx);
   }
 
   Widget _buildMenuList(PodState pod, PodMenuScreen screen, int selectedIdx) {
     final twoLine = screen.useTwoLineRows;
-    final itemHeight = twoLine ? 40.0 : 32.0;
+    final itemHeight = twoLine ? _songRowHeight : _menuRowHeight;
 
     final listView = ListView.builder(
       controller: _scrollController,
@@ -245,38 +461,31 @@ class _LcdScreenState extends State<LcdScreen> {
             }
           },
           child: Container(
-            decoration: isSelected
-                ? BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        widget.theme.lcdHighlightStart,
-                        widget.theme.lcdHighlightEnd,
-                      ],
-                    ),
-                  )
-                : BoxDecoration(
-                    color: index.isEven
+            decoration: BoxDecoration(
+              gradient: isSelected ? ClassicGlass.fill : null,
+              color: isSelected
+                  ? null
+                  : (index.isEven
                         ? Colors.transparent
-                        : widget.theme.lcdDivider.withValues(alpha: 0.15),
-                    border: twoLine
-                        ? Border(
-                            bottom: BorderSide(
-                              color: widget.theme.lcdDivider.withValues(alpha: 0.35),
-                              width: 0.5,
-                            ),
-                          )
-                        : null,
-                  ),
+                        : widget.theme.lcdDivider.withValues(alpha: 0.15)),
+              border: twoLine && index < screen.items.length - 1
+                  ? const Border(
+                      bottom: BorderSide(color: Color(0xFFB5B5BE), width: 1),
+                    )
+                  : null,
+            ),
             padding: EdgeInsets.symmetric(
               horizontal: 10,
-              vertical: twoLine ? 3 : 0,
+              vertical: twoLine ? 4 : 0,
             ),
             alignment: twoLine ? Alignment.centerLeft : null,
             child: twoLine
                 ? _buildTwoLineRow(item, isSelected)
-                : _buildSingleLineRow(item, isSelected),
+                : _buildSingleLineRow(
+                    item,
+                    isSelected,
+                    heiti: screen.id == 'main' || screen.id == 'music',
+                  ),
           ),
         );
       },
@@ -294,7 +503,14 @@ class _LcdScreenState extends State<LcdScreen> {
     );
   }
 
-  Widget _buildSingleLineRow(PodMenuItem item, bool isSelected) {
+  Widget _buildSingleLineRow(
+    PodMenuItem item,
+    bool isSelected, {
+    bool heiti = false,
+  }) {
+    final titleWeight = heiti
+        ? FontWeight.w900
+        : (isSelected ? FontWeight.w700 : FontWeight.w500);
     return Row(
       children: [
         Expanded(
@@ -304,10 +520,12 @@ class _LcdScreenState extends State<LcdScreen> {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: isSelected
-                  ? widget.theme.lcdHighlightText
+                  ? ClassicGlass.selectedText
                   : widget.theme.lcdText,
               fontSize: 12.5,
-              fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+              fontWeight: titleWeight,
+              fontFamily: heiti ? 'NotoSansSC' : null,
+              fontVariations: heiti ? const [FontVariation('wght', 900)] : null,
             ),
           ),
         ),
@@ -317,7 +535,7 @@ class _LcdScreenState extends State<LcdScreen> {
             item.subtitle!,
             style: TextStyle(
               color: isSelected
-                  ? widget.theme.lcdHighlightText.withValues(alpha: 0.8)
+                  ? ClassicGlass.selectedText.withValues(alpha: 0.88)
                   : widget.theme.lcdSubtext,
               fontSize: 11,
             ),
@@ -329,7 +547,7 @@ class _LcdScreenState extends State<LcdScreen> {
             Icons.chevron_right_rounded,
             size: 16,
             color: isSelected
-                ? widget.theme.lcdHighlightText
+                ? ClassicGlass.selectedText
                 : widget.theme.lcdSubtext,
           ),
         ],
@@ -348,11 +566,11 @@ class _LcdScreenState extends State<LcdScreen> {
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
             color: isSelected
-                ? widget.theme.lcdHighlightText
+                ? ClassicGlass.selectedText
                 : widget.theme.lcdText,
-            fontSize: 12.5,
+            fontSize: 16.5,
             fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
-            height: 1.1,
+            height: 1.12,
           ),
         ),
         if (item.subtitle != null)
@@ -362,34 +580,43 @@ class _LcdScreenState extends State<LcdScreen> {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: isSelected
-                  ? widget.theme.lcdHighlightText.withValues(alpha: 0.85)
+                  ? ClassicGlass.selectedText.withValues(alpha: 0.92)
                   : widget.theme.lcdSubtext,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w400,
-              height: 1.15,
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              height: 1.12,
             ),
           ),
       ],
     );
   }
-  Widget _buildDynamicPreview(PodState pod, PodMenuScreen screen, int selectedIdx) {
+
+  Widget _buildDynamicPreview(
+    PodState pod,
+    PodMenuScreen screen,
+    int selectedIdx,
+  ) {
     if (screen.items.isEmpty) return const SizedBox();
     final item = screen.items[selectedIdx];
     final Uint8List? artBytes = pod.previewArtworkFor(item);
 
-    // Classic iPod: artwork fills the entire right pane edge-to-edge.
-    return ColoredBox(
-      color: widget.theme.lcdBackground,
-      child: artBytes != null
-          ? Image.memory(
-              artBytes,
-              fit: BoxFit.cover,
-              width: double.infinity,
-              height: double.infinity,
-              gaplessPlayback: true,
-              filterQuality: FilterQuality.medium,
-            )
-          : _buildIpodMissingArtwork(),
+    final art = artBytes != null
+        ? Image.memory(
+            artBytes,
+            fit: BoxFit.cover,
+            width: double.infinity,
+            height: double.infinity,
+            gaplessPlayback: true,
+            filterQuality: FilterQuality.medium,
+          )
+        : _buildIpodMissingArtwork();
+    final floats = screen.id == 'main' || screen.id == 'music';
+
+    return ClipRect(
+      child: ColoredBox(
+        color: widget.theme.lcdBackground,
+        child: floats ? _FloatingArtwork(child: art) : art,
+      ),
     );
   }
 
@@ -410,80 +637,114 @@ class _LcdScreenState extends State<LcdScreen> {
     }
     return SizedBox.expand(child: child);
   }
-  Widget _buildNowPlayingView(PodState pod) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Column(
-        children: [
-          Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                // 3D Perspective Trapezoid Album Art with Realistic Reflection, centered vertically
-                _build3DCoverArtwork(pod),
-                const SizedBox(width: 14),
 
-                // Track Information (Refined authentic size)
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        pod.currentTitle,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: widget.theme.lcdText,
-                          fontSize: 16.5,
-                          fontWeight: FontWeight.w700,
-                          height: 1.2,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        pod.currentArtist,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: widget.theme.lcdSubtext,
-                          fontSize: 14.0,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        pod.currentAlbum,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: widget.theme.lcdSubtext.withValues(alpha: 0.8),
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w400,
-                        ),
-                      ),
-                      if (pod.queueLength > 0) ...[
-                        const SizedBox(height: 6),
-                        Text(
-                          '${pod.queuePosition}/${pod.queueLength}',
-                          style: TextStyle(
-                            color: widget.theme.lcdSubtext,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
+  Widget _buildNowPlayingView(PodState pod) {
+    return LayoutBuilder(
+      builder: (context, window) {
+        final midline = window.maxWidth / 2;
+        const leftInset = 22.0;
+        return Padding(
+          padding: const EdgeInsets.only(top: 8, bottom: 30),
+          child: Column(
+            children: [
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(left: leftInset, right: 12),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      // Height is the old square size. Width is 16px less,
+                      // so only the right edge moves left. Left inset stays 22.
+                      const pastMidline = 18.0;
+                      const rightPull = 16.0;
+                      final maxByHeight = constraints.maxHeight / 1.42;
+                      var coverHeight = midline + pastMidline - leftInset;
+                      if (coverHeight < 0) coverHeight = 0;
+                      if (maxByHeight > 0 && coverHeight > maxByHeight) {
+                        coverHeight = maxByHeight;
+                      }
+                      var coverWidth = coverHeight - rightPull;
+                      if (coverWidth < 24) coverWidth = coverHeight;
+                      return Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _build3DCoverArtwork(
+                                pod,
+                                coverWidth,
+                                coverHeight,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      pod.currentTitle,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: widget.theme.lcdText,
+                                        fontSize: 16.5,
+                                        fontWeight: FontWeight.w700,
+                                        height: 1.2,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      pod.currentArtist,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: widget.theme.lcdSubtext,
+                                        fontSize: 14.0,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      pod.currentAlbum,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: widget.theme.lcdSubtext
+                                            .withValues(alpha: 0.8),
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w400,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      pod.queueLength > 0
+                                          ? '${pod.queuePosition}/${pod.queueLength}  ${pod.playModeLabel}'
+                                          : pod.playModeLabel,
+                                      style: TextStyle(
+                                        color: widget.theme.lcdSubtext,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                      ],
-                    ],
+                        ],
+                      );
+                    },
                   ),
                 ),
-              ],
-            ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: _buildBottomBar(pod),
+              ),
+            ],
           ),
-
-          // Bottom Bar: Progress Bar or Volume Bar (overlapping)
-          _buildBottomBar(pod),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -506,98 +767,106 @@ class _LcdScreenState extends State<LcdScreen> {
   }
 
   Widget _buildProgressBar(PodState pod) {
-    final rawRemaining = pod.currentDurationSeconds - pod.currentPositionSeconds;
+    final rawRemaining =
+        pod.currentDurationSeconds - pod.currentPositionSeconds;
     final remaining = rawRemaining < 0 ? 0 : rawRemaining;
-    return Row(
+    final timeStyle = TextStyle(
+      color: widget.theme.lcdText,
+      fontSize: 12,
+      height: 1.0,
+      fontWeight: FontWeight.w600,
+    );
+    return _buildMeterRow(
       key: const ValueKey('progress_bar'),
-      children: [
-        SizedBox(
-          width: 34,
-          child: Text(
-            _formatDuration(pod.currentPositionSeconds),
-            style: TextStyle(
-              color: widget.theme.lcdText,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        const SizedBox(width: 6),
-        Expanded(
-          child: _buildIpodMeterBar(pod.playbackProgress.clamp(0.0, 1.0)),
-        ),
-        const SizedBox(width: 6),
-        SizedBox(
-          width: 40,
-          child: Text(
-            '-${_formatDuration(remaining)}',
-            textAlign: TextAlign.right,
-            style: TextStyle(
-              color: widget.theme.lcdText,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-      ],
+      factor: pod.playbackProgress.clamp(0.0, 1.0),
+      leading: Text(
+        _formatDuration(pod.currentPositionSeconds),
+        style: timeStyle,
+      ),
+      trailing: Text(
+        '-${_formatDuration(remaining)}',
+        textAlign: TextAlign.right,
+        style: timeStyle,
+      ),
     );
   }
+
   Widget _buildVolumeBar(PodState pod) {
-    return Row(
+    return _buildMeterRow(
       key: const ValueKey('volume_bar'),
+      factor: pod.volume.clamp(0.0, 1.0),
+      leading: Icon(
+        Icons.volume_mute_rounded,
+        size: 14,
+        color: widget.theme.lcdSubtext,
+      ),
+      trailing: Icon(
+        Icons.volume_up_rounded,
+        size: 22,
+        color: widget.theme.lcdSubtext,
+      ),
+    );
+  }
+
+  Widget _buildMeterRow({
+    required Key key,
+    required Widget leading,
+    required Widget trailing,
+    required double factor,
+  }) {
+    return Row(
+      key: key,
       children: [
-        Icon(
-          Icons.volume_mute_rounded,
-          size: 14,
-          color: widget.theme.lcdSubtext,
+        SizedBox(
+          width: _meterSideSlot,
+          child: Align(alignment: Alignment.centerRight, child: leading),
         ),
-        const SizedBox(width: 6),
-        Expanded(
-          child: _buildIpodMeterBar(pod.volume.clamp(0.0, 1.0)),
-        ),
-        const SizedBox(width: 6),
-        Icon(
-          Icons.volume_up_rounded,
-          size: 22,
-          color: widget.theme.lcdSubtext,
+        const SizedBox(width: _meterLabelGap),
+        Expanded(child: _buildMeterBar(factor)),
+        const SizedBox(width: _meterLabelGap),
+        SizedBox(
+          width: _meterSideSlot,
+          child: Align(alignment: Alignment.centerLeft, child: trailing),
         ),
       ],
     );
   }
 
-  Widget _buildIpodMeterBar(double factor) {
+  Widget _buildMeterBar(double factor) {
+    final clamped = factor.clamp(0.0, 1.0);
     return Container(
-      height: 10,
-      decoration: BoxDecoration(
-        color: widget.theme.lcdDivider,
-        borderRadius: BorderRadius.circular(2),
-        border: Border.all(
-          color: widget.theme.lcdHeaderBorder.withValues(alpha: 0.45),
-          width: 0.5,
-        ),
-      ),
+      height: 12,
+      decoration: const BoxDecoration(color: Color(0xFFE4E8EE)),
       alignment: Alignment.centerLeft,
+      clipBehavior: Clip.hardEdge,
       child: FractionallySizedBox(
-        widthFactor: factor,
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                widget.theme.lcdHighlightStart,
-                widget.theme.lcdHighlightEnd,
-              ],
+        widthFactor: clamped,
+        child: const DecoratedBox(
+          decoration: BoxDecoration(gradient: ClassicGlass.progressFill),
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: FractionallySizedBox(
+              widthFactor: 0.92,
+              child: Padding(
+                padding: EdgeInsets.only(top: 1),
+                child: SizedBox(
+                  height: 2,
+                  child: ColoredBox(color: Color(0xBFFFFFFF)),
+                ),
+              ),
             ),
-            borderRadius: BorderRadius.circular(1.5),
           ),
         ),
       ),
     );
   }
+
   Widget _buildScrubBar(PodState pod) {
     final double scrubProgress = pod.currentDurationSeconds > 0
-        ? (pod.scrubPositionSeconds / pod.currentDurationSeconds).clamp(0.0, 1.0)
+        ? (pod.scrubPositionSeconds / pod.currentDurationSeconds).clamp(
+            0.0,
+            1.0,
+          )
         : 0.0;
 
     return Column(
@@ -616,28 +885,21 @@ class _LcdScreenState extends State<LcdScreen> {
               children: [
                 // Track bar
                 Container(
-                  height: 9,
+                  height: 8,
                   decoration: BoxDecoration(
-                    color: widget.theme.lcdDivider,
-                    borderRadius: BorderRadius.circular(4.5),
+                    color: const Color(0xFFE4E8EE),
+                    borderRadius: BorderRadius.circular(4),
                     border: Border.all(
-                      color: widget.theme.lcdHeaderBorder.withValues(alpha: 0.5),
-                      width: 0.5,
+                      color: const Color(0xFFB4C2CE),
+                      width: 0.6,
                     ),
                   ),
                   alignment: Alignment.centerLeft,
+                  clipBehavior: Clip.antiAlias,
                   child: FractionallySizedBox(
                     widthFactor: scrubProgress,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            widget.theme.lcdHighlightStart,
-                            widget.theme.lcdHighlightEnd,
-                          ],
-                        ),
-                        borderRadius: BorderRadius.circular(4.5),
-                      ),
+                    child: const DecoratedBox(
+                      decoration: BoxDecoration(gradient: ClassicGlass.fill),
                     ),
                   ),
                 ),
@@ -651,7 +913,7 @@ class _LcdScreenState extends State<LcdScreen> {
                     decoration: BoxDecoration(
                       color: Colors.white,
                       border: Border.all(
-                        color: widget.theme.lcdHighlightStart,
+                        color: const Color(0xFF3AA6EA),
                         width: 2.0,
                       ),
                       boxShadow: [
@@ -662,7 +924,9 @@ class _LcdScreenState extends State<LcdScreen> {
                         ),
                       ],
                     ),
-                    transform: Matrix4.rotationZ(0.785398), // 45 degrees diamond
+                    transform: Matrix4.rotationZ(
+                      0.785398,
+                    ), // 45 degrees diamond
                     transformAlignment: Alignment.center,
                   ),
                 ),
@@ -754,10 +1018,15 @@ class _LcdScreenState extends State<LcdScreen> {
     );
   }
 
-  Widget _buildAlbumArtCard(PodState pod, double size, {bool isReflection = false}) {
+  Widget _buildAlbumArtCard(
+    PodState pod,
+    double width,
+    double height, {
+    bool isReflection = false,
+  }) {
     return Container(
-      width: size,
-      height: size,
+      width: width,
+      height: height,
       decoration: BoxDecoration(
         color: widget.theme.lcdDivider.withValues(alpha: 0.45),
         borderRadius: BorderRadius.circular(3),
@@ -769,9 +1038,9 @@ class _LcdScreenState extends State<LcdScreen> {
             ? null
             : [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.22),
-                  blurRadius: 7,
-                  offset: const Offset(3, 3),
+                  color: Colors.black.withValues(alpha: 0.12),
+                  blurRadius: 4,
+                  offset: const Offset(0, 1),
                 ),
               ],
       ),
@@ -782,128 +1051,128 @@ class _LcdScreenState extends State<LcdScreen> {
               fit: BoxFit.cover,
               gaplessPlayback: true,
             )
-          : _buildIpodMissingArtwork(size: size),
+          : _buildIpodMissingArtwork(size: height),
     );
   }
 
-  Widget _build3DCoverArtwork(PodState pod) {
-    const double coverSize = 112.0; // Perfectly balanced size
-    const double reflectionFactor = 0.36;
-    const double reflectionHeight = coverSize * reflectionFactor;
+  Widget _build3DCoverArtwork(
+    PodState pod,
+    double coverWidth,
+    double coverHeight,
+  ) {
+    const double reflectionFactor = 0.40;
 
-    // Shift down by reflectionHeight * 0.5 (~20px) so that the cover artwork
-    // itself is exactly vertically centered, perfectly fixing the "偏上" issue!
-    return Padding(
-      padding: const EdgeInsets.only(top: reflectionHeight * 0.5),
-      child: Transform(
-        alignment: Alignment.centerLeft,
-        transform: Matrix4.identity()
-          ..setEntry(3, 2, 0.0024) // Perspective factor
-          ..rotateY(-0.30)         // Negative Y angle: Left edge tall/forward, Right edge recedes small
-          ..rotateX(0.04)          // Slight forward pitch for natural perspective view
-          ..rotateZ(-0.01),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 1. The Main 3D Album Cover (Centered)
-            _buildAlbumArtCard(pod, coverSize, isReflection: false),
-
-            // 2. Refined Glass Floor Specular Horizon Line (Ground Contact)
-            Container(
-              width: coverSize,
-              height: 1.0,
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.centerLeft,
-                  end: Alignment.centerRight,
-                  colors: [
-                    Color(0x40000000),
-                    Color(0x18000000),
-                    Color(0x05000000),
-                  ],
-                ),
-              ),
-            ),
-
-            // 3. Realistic Mirror Ground Reflection (Glassy exponential fade, no drop shadow)
-            ClipRect(
-              child: Align(
-                alignment: Alignment.topCenter,
-                heightFactor: reflectionFactor,
-                child: Transform.flip(
-                  flipY: true,
-                  child: ShaderMask(
-                    shaderCallback: (rect) {
-                      return const LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Color(0x66FFFFFF), // ~40% opacity at floor contact line
-                          Color(0x28FFFFFF), // ~16% mid fade
-                          Color(0x08FFFFFF), // ~3% subtle tail
-                          Color(0x00FFFFFF), // 0% completely transparent
-                        ],
-                        stops: [0.0, 0.30, 0.65, 1.0],
-                      ).createShader(rect);
-                    },
-                    blendMode: BlendMode.dstIn,
-                    child: _buildAlbumArtCard(pod, coverSize, isReflection: true),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAboutView(PodState pod) {
-    return Container(
-      padding: const EdgeInsets.all(16),
+    return Transform(
+      alignment: Alignment.centerRight,
+      transform: Matrix4.identity()
+        ..setEntry(3, 2, 0.0026)
+        ..rotateY(-0.32),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            Icons.radio_rounded,
-            size: 40,
-            color: widget.theme.lcdHighlightStart,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'LikePod Classic',
-            style: TextStyle(
-              color: widget.theme.lcdText,
-              fontSize: 15,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Version 1.0.0 (Phase 1)',
-            style: TextStyle(
-              color: widget.theme.lcdSubtext,
-              fontSize: 11,
-            ),
-          ),
-          const SizedBox(height: 12),
+          _buildAlbumArtCard(pod, coverWidth, coverHeight, isReflection: false),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-            decoration: BoxDecoration(
-              color: widget.theme.lcdDivider.withValues(alpha: 0.4),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              'Capacity: 160 GB • Format: Android FLAC/MP3',
-              style: TextStyle(
-                color: widget.theme.lcdSubtext,
-                fontSize: 10,
+            width: coverWidth,
+            height: 1,
+            color: const Color(0x14000000),
+          ),
+          ClipRect(
+            child: Align(
+              alignment: Alignment.topCenter,
+              heightFactor: reflectionFactor,
+              child: _fadedMirror(
+                visibleFactor: reflectionFactor,
+                child: _buildAlbumArtCard(
+                  pod,
+                  coverWidth,
+                  coverHeight,
+                  isReflection: true,
+                ),
               ),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  /// Mirrored artwork that is strong at the contact line and gone before the clip.
+  Widget _fadedMirror({required double visibleFactor, required Widget child}) {
+    final mid = (visibleFactor * 0.32).clamp(0.04, 0.45);
+    final end = (visibleFactor * 0.82).clamp(mid + 0.02, 0.96);
+    return Transform.flip(
+      flipY: true,
+      child: ShaderMask(
+        shaderCallback: (rect) {
+          return LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: const [
+              Color(0xE0FFFFFF),
+              Color(0x55FFFFFF),
+              Color(0x00FFFFFF),
+              Color(0x00FFFFFF),
+            ],
+            stops: [0.0, mid, end, 1.0],
+          ).createShader(rect);
+        },
+        blendMode: BlendMode.dstIn,
+        child: child,
+      ),
+    );
+  }
+
+  Widget _buildAboutView() {
+    final infoStyle = TextStyle(color: widget.theme.lcdSubtext, fontSize: 11);
+    final lineStyle = TextStyle(color: widget.theme.lcdText, fontSize: 11);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.radio_rounded,
+                      size: 32,
+                      color: widget.theme.lcdHighlightStart,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'LikePod',
+                      style: TextStyle(
+                        color: widget.theme.lcdText,
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    // 版本号经 package_info_plus 读自 pubspec,永不脱钩。
+                    FutureBuilder<PackageInfo>(
+                      future: PackageInfo.fromPlatform(),
+                      builder: (context, snapshot) {
+                        final version = snapshot.data?.version;
+                        if (version == null) return const SizedBox.shrink();
+                        return Text('Version $version', style: infoStyle);
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    Text('作者：Kimonmusic', style: lineStyle),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -914,26 +1183,6 @@ class _LcdScreenState extends State<LcdScreen> {
 
     final currentIndex = pod.coverFlowIndex.clamp(0, pod.albums.length - 1);
     final currentAlbum = pod.albums[currentIndex];
-
-    // Card dimensions
-    const double cardSize = 112.0;
-    const double reflectionFactor = 0.35;
-    const double reflectionHeight = cardSize * reflectionFactor;
-
-    // Visible range
-    const int visibleRange = 3;
-    final int minIdx = (currentIndex - visibleRange).clamp(0, pod.albums.length - 1);
-    final int maxIdx = (currentIndex + visibleRange).clamp(0, pod.albums.length - 1);
-
-    // Stacking order: left cards, right cards, center card on top
-    final List<int> renderIndices = [];
-    for (int i = minIdx; i < currentIndex; i++) {
-      renderIndices.add(i);
-    }
-    for (int i = maxIdx; i > currentIndex; i--) {
-      renderIndices.add(i);
-    }
-    renderIndices.add(currentIndex);
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -947,107 +1196,25 @@ class _LcdScreenState extends State<LcdScreen> {
         }
       },
       child: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              widget.theme.lcdBackground,
-              widget.theme.lcdBackground,
-              const Color(0xFFF2F2F2),
-            ],
-            stops: const [0.0, 0.55, 1.0],
-          ),
-        ),
+        color: const Color(0xFFF7F7F8),
         child: Column(
           children: [
-            // 3D Cover Flow Stage
             Expanded(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final centerX = constraints.maxWidth / 2;
-                  final centerY = (constraints.maxHeight - reflectionHeight * 0.5) / 2;
-
-                  return Stack(
-                    clipBehavior: Clip.none,
-                    children: renderIndices.map((idx) {
-                      final album = pod.albums[idx];
-                      final int offset = idx - currentIndex;
-                      final bool isCenter = offset == 0;
-
-                      double x;
-                      double rotY;
-                      double scale;
-                      double dimAlpha;
-
-                      if (isCenter) {
-                        x = centerX - cardSize / 2;
-                        rotY = 0.0;
-                        scale = 1.0;
-                        dimAlpha = 0.0;
-                      } else if (offset < 0) {
-                        // Left cards: perspective-tilted toward center
-                        final double stepOffset = (offset + 1) * 28.0;
-                        x = centerX - cardSize / 2 - 66.0 + stepOffset;
-                        rotY = 0.92;
-                        scale = 0.86;
-                        dimAlpha = (0.12 + (-offset - 1) * 0.10).clamp(0.0, 0.45);
-                      } else {
-                        // Right cards: perspective-tilted toward center
-                        final double stepOffset = (offset - 1) * 28.0;
-                        x = centerX - cardSize / 2 + 66.0 + stepOffset;
-                        rotY = -0.92;
-                        scale = 0.86;
-                        dimAlpha = (0.12 + (offset - 1) * 0.10).clamp(0.0, 0.45);
-                      }
-
-                      return Positioned(
-                        left: x,
-                        top: centerY - cardSize / 2,
-                        child: GestureDetector(
-                          onTap: () {
-                            if (isCenter) {
-                              pod.onSelect();
-                            } else {
-                              pod.onRotate(offset);
-                            }
-                          },
-                          child: Transform(
-                            alignment: const Alignment(0.0, 0.48),
-                            transform: Matrix4.identity()
-                              ..setEntry(3, 2, 0.0024)
-                              ..rotateY(rotY)
-                              ..scaleByDouble(scale, scale, 1.0, 1.0),
-                            child: Stack(
-                              children: [
-                                _buildCoverFlowCardWithReflection(
-                                  album,
-                                  cardSize,
-                                  reflectionFactor,
-                                ),
-                                if (dimAlpha > 0)
-                                  Positioned.fill(
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        color: Colors.black.withValues(alpha: dimAlpha),
-                                        borderRadius: BorderRadius.circular(3),
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  );
-                },
+              child: _AnimatedCoverFlow(
+                albums: pod.albums,
+                index: currentIndex,
+                onRotate: pod.onRotate,
+                onSelect: pod.onSelect,
+                buildCard: _buildCoverFlowCardWithReflection,
               ),
             ),
-
-            // Album Metadata Info
-            Container(
-              padding: const EdgeInsets.only(bottom: 10, left: 18, right: 18, top: 2),
+            Padding(
+              padding: const EdgeInsets.only(
+                bottom: 8,
+                left: 16,
+                right: 16,
+                top: 0,
+              ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -1056,10 +1223,10 @@ class _LcdScreenState extends State<LcdScreen> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: widget.theme.lcdText,
-                      fontSize: 13.0,
-                      fontWeight: FontWeight.bold,
+                    style: const TextStyle(
+                      color: Color(0xFF1A1A1A),
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                   const SizedBox(height: 1),
@@ -1068,9 +1235,9 @@ class _LcdScreenState extends State<LcdScreen> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: widget.theme.lcdSubtext,
-                      fontSize: 11.0,
+                    style: const TextStyle(
+                      color: Color(0xFF6E6E6E),
+                      fontSize: 11.5,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -1084,29 +1251,27 @@ class _LcdScreenState extends State<LcdScreen> {
   }
 
   Widget _buildEmptyCoverFlow() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          _buildIpodMissingArtwork(size: 88),
-          const SizedBox(height: 14),
-          Text(
-            'No Albums',
-            style: TextStyle(
-              color: widget.theme.lcdText,
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
+    return const ColoredBox(
+      color: Color(0xFFF7F7F8),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              'No Albums',
+              style: TextStyle(
+                color: Color(0xFF1A1A1A),
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+              ),
             ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Music > Playlists > Rescan',
-            style: TextStyle(
-              color: widget.theme.lcdSubtext,
-              fontSize: 11,
+            SizedBox(height: 4),
+            Text(
+              '音乐 > 播放列表 > 重新扫描',
+              style: TextStyle(color: Color(0xFF6E6E6E), fontSize: 11),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1114,45 +1279,63 @@ class _LcdScreenState extends State<LcdScreen> {
   Widget _buildCoverFlowCardWithReflection(
     AlbumModel album,
     double cardSize,
-    double reflectionFactor,
-  ) {
+    double reflectionFactor, {
+    required double spine,
+    required bool spineOnRight,
+  }) {
+    final spineOpacity = spine.clamp(0.0, 1.0);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 1. Album Face
-        _buildAlbumArtCardForModel(album, cardSize, isReflection: false),
-
-        // 2. Ground horizon line
-        Container(
+        SizedBox(
           width: cardSize,
-          height: 1.0,
-          color: Colors.black.withValues(alpha: 0.15),
+          height: cardSize,
+          child: Stack(
+            children: [
+              _buildAlbumArtCardForModel(album, cardSize, isReflection: false),
+              if (spineOpacity > 0.02)
+                Positioned(
+                  left: spineOnRight ? null : 0,
+                  right: spineOnRight ? 0 : null,
+                  top: 0,
+                  bottom: 0,
+                  width: 11,
+                  child: Opacity(
+                    opacity: spineOpacity,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: spineOnRight
+                              ? Alignment.centerLeft
+                              : Alignment.centerRight,
+                          end: spineOnRight
+                              ? Alignment.centerRight
+                              : Alignment.centerLeft,
+                          colors: const [
+                            Color(0x66FFFFFF),
+                            Color(0xFFF4FBFF),
+                            Color(0xFFD7E7F2),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
-
-        // 3. Mirror Reflection
+        Container(width: cardSize, height: 1, color: const Color(0x18000000)),
         ClipRect(
           child: Align(
             alignment: Alignment.topCenter,
             heightFactor: reflectionFactor,
-            child: Transform.flip(
-              flipY: true,
-              child: ShaderMask(
-                shaderCallback: (rect) {
-                  return const LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Color(0x66FFFFFF),
-                      Color(0x24FFFFFF),
-                      Color(0x06FFFFFF),
-                      Color(0x00FFFFFF),
-                    ],
-                    stops: [0.0, 0.35, 0.7, 1.0],
-                  ).createShader(rect);
-                },
-                blendMode: BlendMode.dstIn,
-                child: _buildAlbumArtCardForModel(album, cardSize, isReflection: true),
+            child: _fadedMirror(
+              visibleFactor: reflectionFactor,
+              child: _buildAlbumArtCardForModel(
+                album,
+                cardSize,
+                isReflection: true,
               ),
             ),
           ),
@@ -1172,17 +1355,14 @@ class _LcdScreenState extends State<LcdScreen> {
       decoration: BoxDecoration(
         color: widget.theme.lcdDivider.withValues(alpha: 0.45),
         borderRadius: BorderRadius.circular(3),
-        border: Border.all(
-          color: widget.theme.lcdHeaderBorder.withValues(alpha: 0.7),
-          width: 0.8,
-        ),
+        border: Border.all(color: const Color(0xFFD5D5D8), width: 0.6),
         boxShadow: isReflection
             ? null
             : [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.25),
-                  blurRadius: 6,
-                  offset: const Offset(2, 2),
+                  color: Colors.black.withValues(alpha: 0.10),
+                  blurRadius: 5,
+                  offset: const Offset(0, 2),
                 ),
               ],
       ),
@@ -1202,4 +1382,281 @@ class _LcdScreenState extends State<LcdScreen> {
     final s = seconds % 60;
     return '$m:${s.toString().padLeft(2, '0')}';
   }
+}
+
+class _AnimatedCoverFlow extends StatefulWidget {
+  final List<AlbumModel> albums;
+  final int index;
+  final void Function(int step) onRotate;
+  final VoidCallback onSelect;
+  final Widget Function(
+    AlbumModel album,
+    double cardSize,
+    double reflectionFactor, {
+    required double spine,
+    required bool spineOnRight,
+  })
+  buildCard;
+
+  const _AnimatedCoverFlow({
+    required this.albums,
+    required this.index,
+    required this.onRotate,
+    required this.onSelect,
+    required this.buildCard,
+  });
+
+  @override
+  State<_AnimatedCoverFlow> createState() => _AnimatedCoverFlowState();
+}
+
+class _AnimatedCoverFlowState extends State<_AnimatedCoverFlow>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  double _from = 0;
+  double _to = 0;
+
+  double get _visual {
+    final t = Curves.easeInOut.transform(_controller.value);
+    return _from + (_to - _from) * t;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _from = _to = widget.index.toDouble();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 320),
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _AnimatedCoverFlow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final next = widget.index.toDouble();
+    if ((next - _to).abs() < 0.001) return;
+    _from = _visual;
+    _to = next;
+    final distance = (_to - _from).abs();
+    final ms = (240 + 80 * distance).round().clamp(240, 560);
+    _controller.duration = Duration(milliseconds: ms);
+    _controller.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            const reflectionFactor = 0.42;
+            final cardSize = (constraints.maxHeight * 0.52).clamp(112.0, 142.0);
+            final centerX = constraints.maxWidth / 2;
+            final stackHeight = cardSize * (1 + reflectionFactor);
+            final top = ((constraints.maxHeight - stackHeight) / 2).clamp(
+              0.0,
+              80.0,
+            );
+            final visual = _visual;
+            final count = widget.albums.length;
+            if (count == 0 || constraints.maxWidth <= 0) {
+              return const SizedBox.shrink();
+            }
+
+            final base = visual.round().clamp(0, count - 1);
+            var minIdx = (base - 4).clamp(0, count - 1);
+            var maxIdx = (base + 4).clamp(0, count - 1);
+            final fromI = _from.round().clamp(0, count - 1);
+            final toI = _to.round().clamp(0, count - 1);
+            if (fromI < minIdx) minIdx = fromI;
+            if (toI < minIdx) minIdx = toI;
+            if (fromI > maxIdx) maxIdx = fromI;
+            if (toI > maxIdx) maxIdx = toI;
+
+            final indices = [for (var i = minIdx; i <= maxIdx; i++) i];
+            indices.sort(
+              (a, b) => (b - visual).abs().compareTo((a - visual).abs()),
+            );
+
+            return Stack(
+              clipBehavior: Clip.hardEdge,
+              children: [
+                for (final idx in indices)
+                  _positionedCard(
+                    idx: idx,
+                    visual: visual,
+                    cardSize: cardSize,
+                    centerX: centerX,
+                    top: top,
+                    reflectionFactor: reflectionFactor,
+                  ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _positionedCard({
+    required int idx,
+    required double visual,
+    required double cardSize,
+    required double centerX,
+    required double top,
+    required double reflectionFactor,
+  }) {
+    final delta = idx - visual;
+    final pose = CoverFlowPose.at(
+      delta: delta,
+      cardSize: cardSize,
+      centerX: centerX,
+    );
+    return Positioned(
+      left: pose.left,
+      top: top,
+      child: GestureDetector(
+        onTap: () {
+          if (delta.abs() < 0.35 && widget.index == idx) {
+            widget.onSelect();
+          } else {
+            widget.onRotate(idx - widget.index);
+          }
+        },
+        child: Transform(
+          alignment: Alignment.center,
+          transform: Matrix4.identity()
+            ..setEntry(3, 2, 0.0016)
+            ..rotateY(pose.rotY),
+          child: widget.buildCard(
+            widget.albums[idx],
+            cardSize,
+            reflectionFactor,
+            spine: pose.spine,
+            spineOnRight: delta < 0,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FloatingArtwork extends StatefulWidget {
+  final Widget child;
+
+  const _FloatingArtwork({required this.child});
+
+  @override
+  State<_FloatingArtwork> createState() => _FloatingArtworkState();
+}
+
+class _FloatingArtworkState extends State<_FloatingArtwork>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 18),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      child: widget.child,
+      builder: (context, child) {
+        final t = _controller.value * math.pi * 2;
+        final dx = math.sin(t) * 11 + math.sin(t * 2 + 0.6) * 3;
+        final dy = math.sin(t + 1.3) * 2.2;
+        return Transform.translate(
+          offset: Offset(dx, dy),
+          child: Transform.scale(scale: 1.08, child: child),
+        );
+      },
+    );
+  }
+}
+
+class _StatusClock extends StatefulWidget {
+  final Color color;
+  final List<Shadow> shadows;
+
+  const _StatusClock({required this.color, required this.shadows});
+
+  @override
+  State<_StatusClock> createState() => _StatusClockState();
+}
+
+class _StatusClockState extends State<_StatusClock> {
+  late DateTime _now;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _now = DateTime.now();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final next = DateTime.now();
+      if (next.hour != _now.hour || next.minute != _now.minute) {
+        setState(() => _now = next);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hour = _now.hour.toString().padLeft(2, '0');
+    final minute = _now.minute.toString().padLeft(2, '0');
+    return Text(
+      '$hour:$minute',
+      style: TextStyle(
+        color: widget.color,
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.4,
+        fontFeatures: const [FontFeature.tabularFigures()],
+        shadows: widget.shadows,
+      ),
+    );
+  }
+}
+
+class _PlayTriangleClipper extends CustomClipper<Path> {
+  const _PlayTriangleClipper();
+
+  @override
+  Path getClip(Size size) {
+    return Path()
+      ..moveTo(size.width * 0.12, 0)
+      ..lineTo(size.width, size.height / 2)
+      ..lineTo(size.width * 0.12, size.height)
+      ..close();
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
