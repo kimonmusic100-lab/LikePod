@@ -1145,10 +1145,12 @@ class _LcdScreenState extends State<LcdScreen> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(
-                      Icons.radio_rounded,
-                      size: 32,
-                      color: widget.theme.lcdHighlightStart,
+                    Image.asset(
+                      'assets/brand/likepod.png',
+                      key: const Key('about_app_icon'),
+                      width: 32,
+                      height: 32,
+                      filterQuality: FilterQuality.medium,
                     ),
                     const SizedBox(height: 6),
                     Text(
