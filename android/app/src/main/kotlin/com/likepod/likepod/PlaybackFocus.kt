@@ -38,11 +38,16 @@ import androidx.annotation.RequiresApi
  * The row's public state string wins over reflection: a paused/stopped/
  * idle/released description is not "still playing".
  *
- * While the yield is armed the keepalive service and its wake lock stay up,
- * and a few-second alarm retries the check. Focus loss used to stop that
- * service, so after a long video HyperOS froze the process and nothing
- * ran until the activity was opened. The alarm is not scheduled unless a
- * yield is armed. The comfortable gap before playback is on the Dart side.
+ * While the yield is armed the keepalive service, its wake lock, a silent
+ * sonification track, and the yield alarms stay up. Focus loss used to stop
+ * the service, and after about twenty seconds without our own audio HyperOS
+ * freezes the process anyway. The in-process poll then stops. Xiaohongshu
+ * still works because the system delivers `AUDIOFOCUS_GAIN` and that binder
+ * call thaws the process. A permanent loss has no such callback, and vc38's
+ * alarm was inexact (exact alarms are denied by default), so a long Bilibili
+ * session never ran the reclaim until the activity was opened. A short
+ * session ends before the freeze. The alarm is not scheduled unless a yield
+ * is armed. The two-second gap before playback is on the Dart side.
  *
  * A playback row never pauses us by itself. Pause comes from focus loss.
  * Our own player, and a row whose uid cannot be read, must not count as
@@ -91,6 +96,8 @@ object PlaybackFocus {
     private var hiddenTried = false
     private var yieldGeneration = 0
     private var quietSinceMs = 0L
+    private var yieldArmedAtMs = 0L
+    private var lastHeartbeatMs = 0L
     private var lastWaitKey: String? = null
     private var foreignWhileHeld: Set<Int> = emptySet()
     private var mainHandler: Handler? = null
@@ -143,6 +150,8 @@ object PlaybackFocus {
         granted = false
         reclaimPosted = false
         quietSinceMs = 0L
+        yieldArmedAtMs = 0L
+        lastHeartbeatMs = 0L
         lastWaitKey = null
         foreignWhileHeld = emptySet()
         mainHandler?.removeCallbacks(reclaimRunnable)
@@ -167,12 +176,23 @@ object PlaybackFocus {
         handler: Handler,
         onLost: () -> Unit,
         onGained: () -> Unit,
+        userRequested: Boolean = false,
     ): Boolean {
         this.onLost = onLost
         this.onGained = onGained
         this.mainHandler = handler
         listening = true
         ensureWatcher(context, handler)
+        // Going to the background re-calls hold while a yield is armed.
+        // Clearing the arm here dropped the poll and the alarm, and a new
+        // focus request can steal the video that just started. A manual
+        // play is userRequested and still takes focus now.
+        if (awaitingReturn && !userRequested) {
+            Log.i(TAG, "hold kept yield")
+            PlaybackAnchor.setYieldHeld(context, true)
+            YieldAlarm.arm(context)
+            return false
+        }
         // A user play (or the anchor re-holding an already playing song)
         // is not a yield. Re-requesting focus here is what echoed a loss
         // back into the pause path.
@@ -284,6 +304,8 @@ object PlaybackFocus {
         awaitingReturn = true
         yieldGeneration++
         quietSinceMs = 0L
+        yieldArmedAtMs = SystemClock.elapsedRealtime()
+        lastHeartbeatMs = 0L
         lastWaitKey = null
         logPlayback("yield armed")
         // Hold the service before the pause callback. That callback clears
@@ -303,6 +325,12 @@ object PlaybackFocus {
      */
     fun nudgeFromAlarm(): Boolean {
         if (!listening || !awaitingReturn) return false
+        val context = appContext
+        if (context != null) {
+            PlaybackAnchor.reassert(context)
+            YieldKeepAlive.start()
+        }
+        heartbeat("alarm")
         reclaimPosted = false
         mainHandler?.removeCallbacks(reclaimRunnable)
         reclaimNow()
@@ -337,6 +365,7 @@ object PlaybackFocus {
     private fun reclaimNow() {
         reclaimPosted = false
         if (!listening || !awaitingReturn || hostLeaving) return
+        heartbeat("poll")
         if (blocksReclaim()) {
             postReclaim(RECLAIM_POLL_MS)
             return
@@ -494,8 +523,20 @@ object PlaybackFocus {
     private fun describeRows(rows: List<PlaybackRow>): String {
         if (rows.isEmpty()) return "rows=0"
         return rows.joinToString(";") { row ->
-            "uid=${row.ownerUid} started=${row.started} state=${row.describedState} raw=${row.raw}"
+            "uid=${row.ownerUid} started=${row.started} state=${row.describedState} usage=${row.usage} raw=${row.raw}"
         }
+    }
+
+    private fun heartbeat(where: String) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastHeartbeatMs < 10_000L) return
+        lastHeartbeatMs = now
+        val age = if (yieldArmedAtMs == 0L) 0L else now - yieldArmedAtMs
+        Log.i(
+            TAG,
+            "yield heartbeat where=$where ageMs=$age keepalive=${YieldKeepAlive.isRunning()}",
+        )
+        logPlayback("yield heartbeat")
     }
 
     private fun logPlayback(reason: String) {
@@ -514,6 +555,7 @@ object PlaybackFocus {
         val selfUid: Int,
         val started: Boolean,
         val describedState: String?,
+        val usage: Int,
         val raw: String,
     ) {
         val isOtherApp: Boolean
@@ -537,8 +579,14 @@ object PlaybackFocus {
                 else -> null
             }
             val describedState = stateIn(described)
-            val started = rowStarted(playerStarted(config), describedState)
-            PlaybackRow(owner, myUid, started, describedState, described.take(160))
+            val usage = config.audioAttributes.usage
+            // The yield keepalive is a silent sonification track on our uid.
+            // It must not count as someone else still playing, and it must
+            // not keep isMusicActive's "foreign started" wait latched if the
+            // uid cannot be read.
+            val started = rowStarted(playerStarted(config), describedState) &&
+                usage != AudioAttributes.USAGE_ASSISTANCE_SONIFICATION
+            PlaybackRow(owner, myUid, started, describedState, usage, described.take(160))
         }
     }
 

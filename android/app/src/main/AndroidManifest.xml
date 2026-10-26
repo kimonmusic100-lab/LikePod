@@ -12,7 +12,10 @@
          申请加入电池优化白名单,通知栏控制在暂停后仍可用。 -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- While a focus yield is armed, an exact alarm thaws a frozen process.
-         Inexact is used when the user has not allowed exact alarms. -->
+         USE_EXACT_ALARM is granted at install. SCHEDULE_EXACT_ALARM is not,
+         on targetSdk 33+, so a long yield used to fall back to an inexact
+         alarm that HyperOS holds until the activity is opened. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application

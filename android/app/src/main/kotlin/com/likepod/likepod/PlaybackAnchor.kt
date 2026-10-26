@@ -30,7 +30,12 @@ object PlaybackAnchor {
     fun isPlaying(): Boolean = playing
 
     fun setYieldHeld(context: Context, held: Boolean) {
-        if (!held) YieldAlarm.disarm(context)
+        if (held) {
+            YieldKeepAlive.start()
+        } else {
+            YieldAlarm.disarm(context)
+            YieldKeepAlive.stop()
+        }
         if (yieldHeld == held && serviceStarted == wanted()) return
         yieldHeld = held
         refresh(context.applicationContext)
@@ -40,6 +45,7 @@ object PlaybackAnchor {
         if (active) {
             yieldHeld = false
             YieldAlarm.disarm(context)
+            YieldKeepAlive.stop()
         }
         if (playing == active && serviceStarted == wanted()) return
         playing = active

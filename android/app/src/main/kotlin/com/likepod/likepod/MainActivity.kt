@@ -140,10 +140,15 @@ class MainActivity : AudioServiceActivity() {
                     }
                 }
                 "holdPlayback" -> {
-                    val granted = holdAudioFocus()
-                    Log.i("LikePod", "holdPlayback granted=$granted")
+                    val user = call.argument<Boolean>("user") == true
+                    val granted = holdAudioFocus(user)
+                    Log.i("LikePod", "holdPlayback granted=$granted user=$user")
                     if (!granted) {
-                        PlaybackAnchor.setPlaying(this, false)
+                        // A yield re-anchor returns false on purpose. Dropping
+                        // the playing flag is fine; dropping the yield is not.
+                        if (!PlaybackFocus.isAwaitingReturn()) {
+                            PlaybackAnchor.setPlaying(this, false)
+                        }
                         result.success(false)
                         return@setMethodCallHandler
                     }
@@ -196,7 +201,7 @@ class MainActivity : AudioServiceActivity() {
         }
     }
 
-    private fun holdAudioFocus(): Boolean {
+    private fun holdAudioFocus(userRequested: Boolean): Boolean {
         val attributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
@@ -212,6 +217,7 @@ class MainActivity : AudioServiceActivity() {
             onGained = {
                 mediaChannel?.invokeMethod("onAudioFocusGained", null)
             },
+            userRequested = userRequested,
         )
     }
 
