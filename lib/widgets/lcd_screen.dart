@@ -705,19 +705,35 @@ class _LcdScreenState extends State<LcdScreen> {
   }
 
   Widget _buildVolumeBar(PodState pod) {
-    return _buildMeterRow(
+    final level = pod.volume.clamp(0.0, 1.0);
+    final percent = (level * 100).round();
+    final numberStyle = TextStyle(
+      color: widget.theme.lcdText,
+      fontSize: 12,
+      height: 1.0,
+      fontWeight: FontWeight.w700,
+    );
+    return Column(
       key: const ValueKey('volume_bar'),
-      factor: pod.volume.clamp(0.0, 1.0),
-      leading: Icon(
-        Icons.volume_mute_rounded,
-        size: 14,
-        color: widget.theme.lcdSubtext,
-      ),
-      trailing: Icon(
-        Icons.volume_up_rounded,
-        size: 22,
-        color: widget.theme.lcdSubtext,
-      ),
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('$percent%', style: numberStyle),
+        const SizedBox(height: 3),
+        _buildMeterRow(
+          key: const ValueKey('volume_meter'),
+          factor: level,
+          leading: Icon(
+            Icons.volume_mute_rounded,
+            size: 14,
+            color: widget.theme.lcdSubtext,
+          ),
+          trailing: Icon(
+            Icons.volume_up_rounded,
+            size: 22,
+            color: widget.theme.lcdSubtext,
+          ),
+        ),
+      ],
     );
   }
 
@@ -974,8 +990,15 @@ class _LcdScreenState extends State<LcdScreen> {
     double coverHeight,
   ) {
     const double reflectionFactor = 0.40;
+    // 90% of the previous card, same aspect ratio. The slot keeps the old
+    // top edge; the smaller card sits on that edge and is centered across
+    // the old width, so it shrinks downward.
+    const double scale = 0.9;
+    final cardWidth = coverWidth * scale;
+    final cardHeight = coverHeight * scale;
+    final slotHeight = coverHeight + 1 + coverHeight * reflectionFactor;
 
-    return Transform(
+    final art = Transform(
       alignment: Alignment.centerRight,
       transform: Matrix4.identity()
         ..setEntry(3, 2, 0.0026)
@@ -984,9 +1007,9 @@ class _LcdScreenState extends State<LcdScreen> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildAlbumArtCard(pod, coverWidth, coverHeight, isReflection: false),
+          _buildAlbumArtCard(pod, cardWidth, cardHeight, isReflection: false),
           Container(
-            width: coverWidth,
+            width: cardWidth,
             height: 1,
             color: const Color(0x14000000),
           ),
@@ -998,8 +1021,8 @@ class _LcdScreenState extends State<LcdScreen> {
                 visibleFactor: reflectionFactor,
                 child: _buildAlbumArtCard(
                   pod,
-                  coverWidth,
-                  coverHeight,
+                  cardWidth,
+                  cardHeight,
                   isReflection: true,
                 ),
               ),
@@ -1007,6 +1030,12 @@ class _LcdScreenState extends State<LcdScreen> {
           ),
         ],
       ),
+    );
+
+    return SizedBox(
+      width: coverWidth,
+      height: slotHeight,
+      child: Align(alignment: Alignment.topCenter, child: art),
     );
   }
 

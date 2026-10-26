@@ -94,8 +94,8 @@ void main() {
     );
   });
 
-  test('a yield resume waits two seconds, then fades back to unity', () {
-    expect(yieldResumeGap, const Duration(milliseconds: 2000));
+  test('a yield resume waits 3.8 seconds, then fades back to unity', () {
+    expect(yieldResumeGap, const Duration(milliseconds: 3800));
     expect(yieldFadeDuration, const Duration(milliseconds: 800));
     expect(yieldFadeDuration.inMilliseconds, inInclusiveRange(500, 1000));
     expect(resumeDelay(fromFocusYield: false), Duration.zero);

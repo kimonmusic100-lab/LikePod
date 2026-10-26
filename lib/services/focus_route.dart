@@ -41,9 +41,9 @@ class FocusYield {
 }
 
 /// Quiet moment after the other app has released audio, before we start.
-/// Two seconds, then the fade rises to the current level. Manual play,
+/// 3.8 seconds, then the fade rises to the current level. Manual play,
 /// next, and seek do not wait and do not fade.
-const yieldResumeGap = Duration(milliseconds: 2000);
+const yieldResumeGap = Duration(milliseconds: 3800);
 
 /// Ramp the player from silence to unity after a yield resume.
 /// The system music volume is unchanged; unity matches the user's setting.

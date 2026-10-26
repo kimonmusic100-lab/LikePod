@@ -1246,6 +1246,9 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
     _schedulePersist(immediate: true);
   }
 
+  @visibleForTesting
+  void openNowPlayingForTest() => _openNowPlaying();
+
   void _openNowPlaying() {
     _volumeBarTimer?.cancel();
     _subModeTimer?.cancel();
