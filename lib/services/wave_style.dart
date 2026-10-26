@@ -19,7 +19,8 @@ enum WaveStyle {
 
   final String label;
 
-  static const fallback = WaveStyle.bars;
+  /// Fresh installs and unknown saved names open on the mirrored bars.
+  static const fallback = WaveStyle.mirror;
 
   static WaveStyle fromName(String? name) {
     for (final style in WaveStyle.values) {

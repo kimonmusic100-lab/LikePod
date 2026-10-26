@@ -33,7 +33,11 @@ void main() {
     pod.openNowPlayingForTest();
     await tester.pump();
 
-    expect(find.byKey(const ValueKey('now_playing_wave_bars')), findsOneWidget);
+    expect(pod.waveStyle, WaveStyle.mirror);
+    expect(
+      find.byKey(const ValueKey('now_playing_wave_mirror')),
+      findsOneWidget,
+    );
     for (final style in WaveStyle.values) {
       pod.setWaveStyle(style);
       await tester.pump();

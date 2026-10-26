@@ -29,7 +29,7 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
   ShellThemeType _shellType = ShellThemeType.spaceGray;
   bool _soundEnabled = true;
   bool _hapticsEnabled = true;
-  WaveStyle _waveStyle = WaveStyle.bars;
+  WaveStyle _waveStyle = WaveStyle.mirror;
   List<String> _musicFolders = const [];
   List<UserPlaylist> _playlists = const [];
   String _playlistDraft = '';

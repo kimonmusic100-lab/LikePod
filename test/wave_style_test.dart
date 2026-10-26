@@ -18,12 +18,13 @@ void main() {
     }
   });
 
-  test('style names round-trip and unknown names use classic bars', () {
+  test('style names round-trip and a fresh install uses mirrored bars', () {
     expect(WaveStyle.values, hasLength(10));
     expect(WaveStyle.fromName('radial'), WaveStyle.radial);
     expect(WaveStyle.fromName('lines').label, '极简细线');
-    expect(WaveStyle.fromName(null), WaveStyle.bars);
-    expect(WaveStyle.fromName('nope'), WaveStyle.bars);
+    expect(WaveStyle.fromName('bars'), WaveStyle.bars);
+    expect(WaveStyle.fromName(null), WaveStyle.mirror);
+    expect(WaveStyle.fromName('nope'), WaveStyle.mirror);
     expect(waveSeed('晴天'), isNot(waveSeed('七里香')));
   });
 }

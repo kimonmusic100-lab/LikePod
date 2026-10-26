@@ -107,11 +107,11 @@ class _WavePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     switch (style) {
       case WaveStyle.bars:
-        _bars(canvas, size, fromCenter: false, reflect: false);
+        _bars(canvas, size, reflect: false);
       case WaveStyle.mirror:
-        _bars(canvas, size, fromCenter: true, reflect: false);
+        _mirror(canvas, size);
       case WaveStyle.reflect:
-        _bars(canvas, size, fromCenter: false, reflect: true);
+        _bars(canvas, size, reflect: true);
       case WaveStyle.dots:
         _dots(canvas, size);
       case WaveStyle.glow:
@@ -129,12 +129,18 @@ class _WavePainter extends CustomPainter {
     }
   }
 
-  void _bars(
-    Canvas canvas,
-    Size size, {
-    required bool fromCenter,
-    required bool reflect,
-  }) {
+  /// Smooth sample across the coarse playhead bands.
+  double _bandAt(double t) {
+    if (levels.isEmpty) return 0;
+    if (levels.length == 1) return levels.first.clamp(0.0, 1.0);
+    final x = t.clamp(0.0, 1.0) * (levels.length - 1);
+    final i = x.floor().clamp(0, levels.length - 2);
+    final f = x - i;
+    final s = f * f * (3 - 2 * f);
+    return (levels[i] * (1 - s) + levels[i + 1] * s).clamp(0.0, 1.0);
+  }
+
+  void _bars(Canvas canvas, Size size, {required bool reflect}) {
     final count = levels.length;
     final gap = size.width * 0.012;
     final slot = size.width / count;
@@ -159,15 +165,6 @@ class _WavePainter extends CustomPainter {
           ),
           Paint()..color = color.withValues(alpha: 0.28),
         );
-      } else if (fromCenter) {
-        final body = (size.height * 0.46) * levels[i];
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(
-            Rect.fromLTWH(x, size.height / 2 - body, breadth, body * 2),
-            const Radius.circular(1),
-          ),
-          paint,
-        );
       } else {
         final body = (size.height - 1) * levels[i];
         canvas.drawRRect(
@@ -181,16 +178,77 @@ class _WavePainter extends CustomPainter {
     }
   }
 
-  void _dots(Canvas canvas, Size size) {
-    final count = levels.length;
-    final slot = size.width / count;
+  /// Capsules mirrored through a center line. Denser than the classic bars.
+  void _mirror(Canvas canvas, Size size) {
+    const breadth = 3.4;
+    const gap = 2.0;
+    const slot = breadth + gap;
+    final count = math.max(18, ((size.width - 8) / slot).floor());
+    final used = count * slot - gap;
+    final origin = (size.width - used) / 2;
+    final mid = size.height / 2;
+    const split = 1.05;
+    final reach = math.max(2.0, mid - split - 0.4);
+    canvas.drawLine(
+      Offset(origin, mid),
+      Offset(origin + used, mid),
+      Paint()
+        ..color = color.withValues(alpha: 0.18)
+        ..strokeWidth = 0.7,
+    );
     final paint = Paint()..color = color;
-    const step = 4.2;
+    final radius = Radius.circular(breadth / 2);
     for (var i = 0; i < count; i++) {
-      final cx = slot * i + slot / 2;
-      final dots = math.max(1, (levels[i] * (size.height / step)).floor());
-      for (var d = 0; d < dots; d++) {
-        canvas.drawCircle(Offset(cx, size.height - 2 - d * step), 1.15, paint);
+      final t = count == 1 ? 0.5 : i / (count - 1);
+      final edge = math.sin(t * math.pi);
+      final level = ((0.16 + 0.84 * _bandAt(t)) * (0.62 + 0.38 * edge)).clamp(
+        0.0,
+        1.0,
+      );
+      final body = math.max(1.7, reach * level);
+      final x = origin + i * slot;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(x, mid - split - body, breadth, body),
+          radius,
+        ),
+        paint,
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(x, mid + split, breadth, body),
+          radius,
+        ),
+        paint,
+      );
+    }
+  }
+
+  /// Even LED columns. Unlit dots stay faint so the grid reads at rest.
+  void _dots(Canvas canvas, Size size) {
+    const rows = 7;
+    final stepY = (size.height - 3) / rows;
+    final radius = (stepY * 0.30).clamp(1.05, 1.55);
+    final stepX = math.max(stepY * 1.15, radius * 3.2);
+    final cols = math.max(12, ((size.width - 8) / stepX).floor());
+    final usedW = cols * stepX;
+    final originX = (size.width - usedW) / 2 + stepX / 2;
+    final bottom = size.height - 1.4 - radius;
+    final ghost = Paint()..color = color.withValues(alpha: 0.16);
+    final lit = Paint()..color = color;
+    for (var c = 0; c < cols; c++) {
+      final t = cols == 1 ? 0.5 : c / (cols - 1);
+      final level = (0.08 + 0.92 * _bandAt(t)).clamp(0.0, 1.0);
+      final litCount = (level * rows).round().clamp(0, rows);
+      for (var r = 0; r < rows; r++) {
+        final center = Offset(originX + c * stepX, bottom - r * stepY);
+        final on = r < litCount;
+        final peak = on && r == litCount - 1;
+        canvas.drawCircle(
+          center,
+          peak ? radius * 1.18 : radius,
+          on ? lit : ghost,
+        );
       }
     }
   }

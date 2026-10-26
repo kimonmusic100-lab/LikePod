@@ -27,7 +27,7 @@ void main() {
     expect(settings.lastPositionMs, 0);
     expect(settings.lastQueueIds, isEmpty);
     expect(settings.playlists, isEmpty);
-    expect(settings.waveStyle, 'bars');
+    expect(settings.waveStyle, 'mirror');
   });
 
   test('theme, ratings, and resume point round-trip', () async {

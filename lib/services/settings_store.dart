@@ -43,7 +43,7 @@ class AppSettings {
     this.lastPositionMs = 0,
     this.lastQueueIds = const [],
     this.playlists = const [],
-    this.waveStyle = 'bars',
+    this.waveStyle = 'mirror',
   });
 }
 
