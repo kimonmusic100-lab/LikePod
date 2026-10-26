@@ -593,35 +593,44 @@ class _LcdScreenState extends State<LcdScreen> {
       builder: (context, window) {
         final midline = window.maxWidth / 2;
         const leftInset = 22.0;
+        const rightInset = 12.0;
         return Padding(
           padding: const EdgeInsets.only(top: 8, bottom: 30),
           child: Column(
             children: [
               Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.only(left: leftInset, right: 12),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      // Height is the old square size. Width is 16px less,
-                      // so only the right edge moves left. Left inset stays 22.
-                      const pastMidline = 18.0;
-                      const rightPull = 16.0;
-                      final maxByHeight = constraints.maxHeight / 1.42;
-                      var coverHeight = midline + pastMidline - leftInset;
-                      if (coverHeight < 0) coverHeight = 0;
-                      if (maxByHeight > 0 && coverHeight > maxByHeight) {
-                        coverHeight = maxByHeight;
-                      }
-                      var coverWidth = coverHeight - rightPull;
-                      if (coverWidth < 24) coverWidth = coverHeight;
-                      final waveBottom = nowPlayingWaveBottom(
-                        areaHeight: constraints.maxHeight,
-                        coverHeight: coverHeight,
-                      );
-                      return Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          Column(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    // Height is the old square size. Width is 16px less,
+                    // so only the right edge moves left. Left inset stays 22.
+                    const pastMidline = 18.0;
+                    const rightPull = 16.0;
+                    final maxByHeight = constraints.maxHeight / 1.42;
+                    var coverHeight = midline + pastMidline - leftInset;
+                    if (coverHeight < 0) coverHeight = 0;
+                    if (maxByHeight > 0 && coverHeight > maxByHeight) {
+                      coverHeight = maxByHeight;
+                    }
+                    var coverWidth = coverHeight - rightPull;
+                    if (coverWidth < 24) coverWidth = coverHeight;
+                    final waveBottom = nowPlayingWaveBottom(
+                      areaHeight: constraints.maxHeight,
+                      coverHeight: coverHeight,
+                    );
+                    // Cover block stays inset 22/12. The waveform uses the
+                    // same width it had inside that padding, shifted so the
+                    // two screen margins match.
+                    const bandInset = 2.0;
+                    final waveSide = (leftInset + rightInset) / 2 + bandInset;
+                    return Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.only(
+                            left: leftInset,
+                            right: rightInset,
+                          ),
+                          child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Row(
@@ -692,18 +701,16 @@ class _LcdScreenState extends State<LcdScreen> {
                               ),
                             ],
                           ),
-                          Positioned(
-                            left: 2,
-                            right: 2,
-                            bottom: waveBottom,
-                            child: NowPlayingWave(
-                              color: widget.theme.lcdText,
-                            ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
+                        ),
+                        Positioned(
+                          left: waveSide,
+                          right: waveSide,
+                          bottom: waveBottom,
+                          child: NowPlayingWave(color: widget.theme.lcdText),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
               Padding(

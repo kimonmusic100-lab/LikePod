@@ -26,6 +26,22 @@ double nowPlayingWaveBottom({
   return minGapAboveProgress;
 }
 
+/// Center of the first dot column.
+///
+/// Columns sit [pitch] apart. The ink runs from the left edge of the first
+/// dot to the right edge of the last, and whatever width is left is split
+/// evenly. [radius] is the unscaled dot radius (peak dots stay on these centers).
+double dotColumnOriginX({
+  required double width,
+  required int columns,
+  required double pitch,
+  required double radius,
+}) {
+  if (columns <= 1) return width / 2;
+  final occupied = (columns - 1) * pitch + radius * 2;
+  return (width - occupied) / 2 + radius;
+}
+
 /// Lit black dots only. Levels come from [SpectrumFeed].
 class NowPlayingWave extends StatefulWidget {
   final Color color;
@@ -93,8 +109,12 @@ class _DotColumnPainter extends CustomPainter {
     final radius = (stepY * 0.32).clamp(1.15, 1.7);
     final stepX = math.max(stepY * 1.15, radius * 3.1);
     final cols = math.max(12, ((size.width - 8) / stepX).floor());
-    final usedW = cols * stepX;
-    final originX = (size.width - usedW) / 2 + stepX / 2;
+    final originX = dotColumnOriginX(
+      width: size.width,
+      columns: cols,
+      pitch: stepX,
+      radius: radius,
+    );
     final bottom = size.height - 2 - radius;
     final lit = Paint()..color = color;
     for (var c = 0; c < cols; c++) {

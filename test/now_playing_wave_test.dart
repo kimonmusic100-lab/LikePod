@@ -60,11 +60,18 @@ void main() {
     ]);
     await tester.pump();
     expect(find.byKey(const ValueKey('now_playing_wave')), findsOneWidget);
+    final waveRect = tester.getRect(
+      find.byKey(const ValueKey('now_playing_wave')),
+    );
+    final lcdRect = tester.getRect(find.byType(LcdScreen));
+    final leftInset = waveRect.left - lcdRect.left;
+    final rightInset = lcdRect.right - waveRect.right;
+    expect((leftInset - rightInset).abs(), lessThan(0.5));
     expect(find.text('镜像柱'), findsNothing);
     expect(find.text('柔光柱'), findsNothing);
     expect(find.text('点阵柱'), findsNothing);
     expect(find.text('波形特效'), findsNothing);
-    await _saveShot(tester, 'now-playing-wave-dots-vc46.png');
+    await _saveShot(tester, 'now-playing-wave-dots-vc47.png');
 
     await tester.longPress(find.byKey(const Key('click_wheel_center')));
     await tester.pump();
