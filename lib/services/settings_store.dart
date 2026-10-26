@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'playlist_library.dart';
+
 /// Theme, click-wheel preferences, ratings, and resume point.
 class AppSettings {
   static const defaultShell = 'spaceGray';
@@ -24,6 +26,7 @@ class AppSettings {
   final int? lastSongId;
   final int lastPositionMs;
   final List<int> lastQueueIds;
+  final List<UserPlaylist> playlists;
 
   const AppSettings({
     this.shell = defaultShell,
@@ -37,6 +40,7 @@ class AppSettings {
     this.lastSongId,
     this.lastPositionMs = 0,
     this.lastQueueIds = const [],
+    this.playlists = const [],
   });
 }
 
@@ -54,6 +58,7 @@ class SettingsStore {
   static const lastSongKey = 'last_song_id';
   static const lastPositionKey = 'last_position_ms';
   static const lastQueueKey = 'last_queue_ids';
+  static const playlistsKey = 'playlists';
 
   final SharedPreferences _prefs;
 
@@ -78,6 +83,7 @@ class SettingsStore {
           : null,
       lastPositionMs: _prefs.getInt(lastPositionKey) ?? 0,
       lastQueueIds: _decodeQueue(_prefs.getString(lastQueueKey)),
+      playlists: PlaylistLibrary.parse(_prefs.getString(playlistsKey)),
     );
   }
 
@@ -100,6 +106,7 @@ class SettingsStore {
         settings.lastPositionMs < 0 ? 0 : settings.lastPositionMs,
       ),
       _prefs.setString(lastQueueKey, jsonEncode(settings.lastQueueIds)),
+      _prefs.setString(playlistsKey, PlaylistLibrary.encode(settings.playlists)),
     ];
     if (settings.volume != null) {
       writes.add(_prefs.setDouble(volumeKey, settings.volume!.clamp(0.0, 1.0)));

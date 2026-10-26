@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:likepod/providers/pod_state.dart';
+import 'package:likepod/services/playlist_library.dart';
 import 'package:likepod/services/settings_store.dart';
 import 'package:likepod/theme/pod_theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -25,6 +26,7 @@ void main() {
     expect(settings.lastSongId, isNull);
     expect(settings.lastPositionMs, 0);
     expect(settings.lastQueueIds, isEmpty);
+    expect(settings.playlists, isEmpty);
   });
 
   test('theme, ratings, and resume point round-trip', () async {
@@ -42,6 +44,9 @@ void main() {
         musicFolders: ['/storage/emulated/0/Music', '/storage/0000-0000/Netease'],
         lastPositionMs: 18600,
         lastQueueIds: [12, 4, -1],
+        playlists: [
+          UserPlaylist(id: 'pl1', name: '通勤', songIds: [12, 4]),
+        ],
       ),
     );
 
@@ -62,6 +67,8 @@ void main() {
       '/storage/emulated/0/Music',
       '/storage/0000-0000/Netease',
     ]);
+    expect(loaded.playlists.single.name, '通勤');
+    expect(loaded.playlists.single.songIds, [12, 4]);
   });
 
   test('music folders decode tolerates junk and empty means all', () async {

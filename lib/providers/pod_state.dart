@@ -8,6 +8,7 @@ import '../models/menu_item.dart';
 import '../models/song_model.dart';
 import '../services/music_service.dart';
 import '../services/output_probe.dart';
+import '../services/playlist_library.dart';
 import '../services/settings_store.dart';
 import '../services/sound_service.dart';
 import '../theme/pod_theme.dart';
@@ -28,6 +29,10 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
   bool _soundEnabled = true;
   bool _hapticsEnabled = true;
   List<String> _musicFolders = const [];
+  List<UserPlaylist> _playlists = const [];
+  String _playlistDraft = '';
+  int _playlistNameToken = 0;
+  String? _namingPlaylistId;
 
   // Navigation Stack
   final List<PodMenuScreen> _screenStack = [];
@@ -138,6 +143,15 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
     _savedSongId = settings.lastSongId;
     _savedPositionMs = settings.lastPositionMs;
     _savedQueueIds = List<int>.from(settings.lastQueueIds);
+    _playlists = List<UserPlaylist>.from(settings.playlists);
+  }
+
+  String get playlistDraft => _playlistDraft;
+
+  int get playlistNameToken => _playlistNameToken;
+
+  void setPlaylistDraft(String value) {
+    _playlistDraft = value;
   }
 
   ShellThemeType _parseShell(String name) {
@@ -179,6 +193,7 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
       lastQueueIds: song != null
           ? _musicService.currentQueueIds
           : List<int>.from(_savedQueueIds),
+      playlists: List<UserPlaylist>.from(_playlists),
     );
   }
 
@@ -456,6 +471,7 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
   void _rebuildMenus() {
     _buildAlbumsList();
     _refreshPlaybackMenus();
+    _refreshPlaylistScreens();
     if (!_disposed) notifyListeners();
   }
 
@@ -782,36 +798,15 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
         title: '播放列表',
         previewType: PreviewType.artwork,
         previewIcon: Icons.playlist_play_rounded,
-        subMenuItems: () => [
-          PodMenuItem(
-            id: 'all_songs_playlist',
-            title: '所有歌曲 (${_musicService.allSongs.length})',
-            hasSubmenu: false,
-            onSelect: () {
-              if (_musicService.allSongs.isNotEmpty) {
-                _playSong(
-                  _musicService.allSongs.first,
-                  queue: _musicService.allSongs,
-                );
-              }
-            },
-          ),
-          PodMenuItem(
-            id: 'rescan',
-            title: '重新扫描',
-            hasSubmenu: false,
-            onSelect: () async {
-              await _musicService.scanLocalMusic();
-              _rebuildMenus();
-            },
-          ),
-        ],
+        subMenuTwoLineRows: true,
+        subMenuItems: _playlistMenuItems,
       ),
       PodMenuItem(
         id: 'artists',
         title: '表演者',
         previewType: PreviewType.artwork,
         previewIcon: Icons.person_rounded,
+        subMenuTwoLineRows: true,
         subMenuItems: () => _buildArtistsMenu(),
       ),
       PodMenuItem(
@@ -819,6 +814,7 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
         title: '专辑',
         previewType: PreviewType.artwork,
         previewIcon: Icons.album_rounded,
+        subMenuTwoLineRows: true,
         subMenuItems: () => _buildAlbumsMenu(),
       ),
       PodMenuItem(
@@ -888,7 +884,7 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
       return PodMenuItem(
         id: 'artist_${entry.key}',
         title: entry.key,
-        subtitle: '${entry.value.length} songs',
+        subtitle: '${entry.value.length} 首',
         subMenuTwoLineRows: true,
         subMenuItems: () => entry.value.map((song) {
           return PodMenuItem(
@@ -1145,6 +1141,15 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
 
+    if (currentScreen.id == 'playlist_name') {
+      _soundService.playSelect(
+        soundEnabled: _soundEnabled,
+        hapticsEnabled: _hapticsEnabled,
+      );
+      commitPlaylistName();
+      return;
+    }
+
     final items = currentScreen.items;
     if (items.isEmpty) return;
 
@@ -1297,6 +1302,343 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
     _screenStack.add(coverFlowScreen);
     _indexStack.add(0);
     notifyListeners();
+  }
+
+  List<PodMenuItem> _playlistMenuItems() {
+    final count = _musicService.allSongs.length;
+    return [
+      PodMenuItem(
+        id: 'playlist_new',
+        title: '新建播放列表',
+        subtitle: '输入名称',
+        hasSubmenu: false,
+        onSelect: _beginCreatePlaylist,
+      ),
+      PodMenuItem(
+        id: 'all_songs_playlist',
+        title: '所有歌曲',
+        subtitle: '$count 首',
+        hasSubmenu: false,
+        onSelect: () {
+          final songs = _musicService.allSongs;
+          if (songs.isEmpty) return;
+          _playSong(songs.first, queue: songs);
+        },
+      ),
+      for (final list in _playlists)
+        PodMenuItem(
+          id: 'playlist:${list.id}',
+          title: list.name,
+          subtitle: '${list.songIds.length} 首',
+          subMenuTwoLineRows: true,
+          subMenuItems: () => _playlistDetailItems(list.id),
+        ),
+      PodMenuItem(
+        id: 'rescan',
+        title: '重新扫描',
+        subtitle: '刷新曲库',
+        hasSubmenu: false,
+        onSelect: () async {
+          await _musicService.scanLocalMusic();
+          _rebuildMenus();
+        },
+      ),
+    ];
+  }
+
+  List<PodMenuItem> _playlistDetailItems(String id) {
+    final list = PlaylistLibrary.find(_playlists, id);
+    if (list == null) {
+      return [
+        PodMenuItem(
+          id: 'playlist_missing',
+          title: '播放列表已删除',
+          hasSubmenu: false,
+        ),
+      ];
+    }
+    final songs = _songsFor(list);
+    return [
+      if (songs.isNotEmpty)
+        PodMenuItem(
+          id: 'playlist_play:$id',
+          title: '播放全部',
+          subtitle: '${songs.length} 首',
+          hasSubmenu: false,
+          onSelect: () => _playSong(songs.first, queue: songs),
+        ),
+      PodMenuItem(
+        id: 'playlist_add:$id',
+        title: '添加歌曲',
+        subtitle: '从曲库选择',
+        subMenuTwoLineRows: true,
+        subMenuItems: () => _playlistAddItems(id),
+      ),
+      PodMenuItem(
+        id: 'playlist_remove:$id',
+        title: '移除歌曲',
+        subtitle: songs.isEmpty ? '列表是空的' : '${songs.length} 首',
+        subMenuTwoLineRows: true,
+        subMenuItems: () => _playlistRemoveItems(id),
+      ),
+      PodMenuItem(
+        id: 'playlist_rename:$id',
+        title: '重命名',
+        subtitle: list.name,
+        hasSubmenu: false,
+        onSelect: () => _beginRenamePlaylist(id),
+      ),
+      PodMenuItem(
+        id: 'playlist_delete:$id',
+        title: '删除播放列表',
+        subtitle: '不可恢复',
+        hasSubmenu: false,
+        onSelect: () => _deletePlaylist(id),
+      ),
+      for (final song in songs)
+        PodMenuItem(
+          id: 'playlist_song:${id}_${song.id}',
+          title: song.title,
+          subtitle: song.artist,
+          hasSubmenu: false,
+          onSelect: () => _playSong(song, queue: songs),
+        ),
+    ];
+  }
+
+  List<PodMenuItem> _playlistRemoveItems(String id) {
+    final list = PlaylistLibrary.find(_playlists, id);
+    if (list == null) return const [];
+    final songs = _songsFor(list);
+    if (songs.isEmpty) {
+      return const [
+        PodMenuItem(
+          id: 'playlist_remove_empty',
+          title: '列表是空的',
+          hasSubmenu: false,
+        ),
+      ];
+    }
+    return [
+      for (final song in songs)
+        PodMenuItem(
+          id: 'playlist_remove_song:${id}_${song.id}',
+          title: song.title,
+          subtitle: '轻点移除',
+          hasSubmenu: false,
+          onSelect: () => _removeSongFromPlaylist(id, song.id),
+        ),
+    ];
+  }
+
+  List<PodMenuItem> _playlistAddItems(String id) {
+    final list = PlaylistLibrary.find(_playlists, id);
+    final present = list?.songIds.toSet() ?? const <int>{};
+    final songs = _musicService.allSongs;
+    if (songs.isEmpty) {
+      return [
+        const PodMenuItem(
+          id: 'playlist_add_empty',
+          title: '曲库是空的',
+          subtitle: '请先扫描',
+          hasSubmenu: false,
+        ),
+      ];
+    }
+    return [
+      for (final song in songs)
+        PodMenuItem(
+          id: 'playlist_add_song:${id}_${song.id}',
+          title: song.title,
+          subtitle: present.contains(song.id) ? '已添加' : song.artist,
+          hasSubmenu: false,
+          onSelect: () => _togglePlaylistSong(id, song.id),
+        ),
+    ];
+  }
+
+  List<SongModel> _songsFor(UserPlaylist list) {
+    final byId = {for (final song in _musicService.allSongs) song.id: song};
+    return [
+      for (final id in list.songIds)
+        if (byId[id] != null) byId[id]!,
+    ];
+  }
+
+  void _beginCreatePlaylist() {
+    _namingPlaylistId = null;
+    _playlistDraft = '';
+    _playlistNameToken++;
+    _pushScreen(
+      PodMenuScreen(
+        id: 'playlist_name',
+        title: '新建播放列表',
+        isSplitView: false,
+        items: [
+          PodMenuItem(
+            id: 'playlist_name_commit',
+            title: '完成',
+            subtitle: '中键确认',
+            hasSubmenu: false,
+            onSelect: commitPlaylistName,
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _beginRenamePlaylist(String id) {
+    final list = PlaylistLibrary.find(_playlists, id);
+    if (list == null) return;
+    _namingPlaylistId = id;
+    _playlistDraft = list.name;
+    _playlistNameToken++;
+    _pushScreen(
+      PodMenuScreen(
+        id: 'playlist_name',
+        title: '重命名',
+        isSplitView: false,
+        items: [
+          PodMenuItem(
+            id: 'playlist_name_commit',
+            title: '完成',
+            subtitle: '中键确认',
+            hasSubmenu: false,
+            onSelect: commitPlaylistName,
+          ),
+        ],
+      ),
+    );
+  }
+
+  void commitPlaylistName() {
+    final name = _playlistDraft.trim();
+    if (name.isEmpty) return;
+    final renaming = _namingPlaylistId;
+    if (renaming == null) {
+      final id = 'pl_${DateTime.now().microsecondsSinceEpoch}';
+      _playlists = PlaylistLibrary.create(_playlists, id: id, name: name);
+      _popIfNameScreen();
+      _schedulePersist(immediate: true);
+      _refreshPlaylistScreens();
+      _pushScreen(
+        PodMenuScreen(
+          id: 'playlist:$id',
+          title: name,
+          isSplitView: false,
+          useTwoLineRows: true,
+          items: _playlistDetailItems(id),
+        ),
+      );
+      return;
+    }
+    _playlists = PlaylistLibrary.rename(_playlists, id: renaming, name: name);
+    _popIfNameScreen();
+    _schedulePersist(immediate: true);
+    _refreshPlaylistScreens();
+    if (!_disposed) notifyListeners();
+  }
+
+  void _deletePlaylist(String id) {
+    _playlists = PlaylistLibrary.delete(_playlists, id);
+    _schedulePersist(immediate: true);
+    while (_screenStack.length > 1) {
+      final screenId = _screenStack.last.id;
+      final inside = screenId == 'playlist:$id' ||
+          screenId == 'playlist_add:$id' ||
+          screenId == 'playlist_remove:$id' ||
+          (screenId == 'playlist_name' && _namingPlaylistId == id);
+      if (!inside) break;
+      _screenStack.removeLast();
+      _indexStack.removeLast();
+    }
+    _refreshPlaylistScreens();
+    if (!_disposed) notifyListeners();
+  }
+
+  void _togglePlaylistSong(String id, int songId) {
+    final list = PlaylistLibrary.find(_playlists, id);
+    if (list == null) return;
+    _playlists = list.songIds.contains(songId)
+        ? PlaylistLibrary.removeSong(_playlists, id: id, songId: songId)
+        : PlaylistLibrary.addSong(_playlists, id: id, songId: songId);
+    _schedulePersist(immediate: true);
+    _refreshPlaylistScreens();
+    if (!_disposed) notifyListeners();
+  }
+
+  void _removeSongFromPlaylist(String id, int songId) {
+    _playlists = PlaylistLibrary.removeSong(_playlists, id: id, songId: songId);
+    _schedulePersist(immediate: true);
+    _refreshPlaylistScreens();
+    if (!_disposed) notifyListeners();
+  }
+
+  void _popIfNameScreen() {
+    if (_screenStack.length > 1 && _screenStack.last.id == 'playlist_name') {
+      _screenStack.removeLast();
+      _indexStack.removeLast();
+    }
+  }
+
+  void _pushScreen(PodMenuScreen screen) {
+    _screenStack.add(screen);
+    _indexStack.add(0);
+    if (!_disposed) notifyListeners();
+  }
+
+  void _refreshPlaylistScreens() {
+    for (var i = 0; i < _screenStack.length; i++) {
+      final screen = _screenStack[i];
+      final PodMenuScreen? next;
+      if (screen.id == 'playlists') {
+        next = PodMenuScreen(
+          id: 'playlists',
+          title: '播放列表',
+          isSplitView: false,
+          useTwoLineRows: true,
+          items: _playlistMenuItems(),
+        );
+      } else if (screen.id.startsWith('playlist:')) {
+        final id = screen.id.substring('playlist:'.length);
+        final list = PlaylistLibrary.find(_playlists, id);
+        if (list == null) continue;
+        next = PodMenuScreen(
+          id: screen.id,
+          title: list.name,
+          isSplitView: false,
+          useTwoLineRows: true,
+          items: _playlistDetailItems(id),
+        );
+      } else if (screen.id.startsWith('playlist_add:')) {
+        final id = screen.id.substring('playlist_add:'.length);
+        if (PlaylistLibrary.find(_playlists, id) == null) continue;
+        next = PodMenuScreen(
+          id: screen.id,
+          title: '添加歌曲',
+          isSplitView: false,
+          useTwoLineRows: true,
+          items: _playlistAddItems(id),
+        );
+      } else if (screen.id.startsWith('playlist_remove:')) {
+        final id = screen.id.substring('playlist_remove:'.length);
+        if (PlaylistLibrary.find(_playlists, id) == null) continue;
+        next = PodMenuScreen(
+          id: screen.id,
+          title: '移除歌曲',
+          isSplitView: false,
+          useTwoLineRows: true,
+          items: _playlistRemoveItems(id),
+        );
+      } else {
+        continue;
+      }
+      final last = next.items.isEmpty ? 0 : next.items.length - 1;
+      _screenStack[i] = next;
+      if (i < _indexStack.length && _indexStack[i] > last) {
+        _indexStack[i] = last;
+      }
+    }
   }
 
   void _openAbout() {

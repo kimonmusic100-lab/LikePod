@@ -319,6 +319,21 @@ class _LcdScreenState extends State<LcdScreen> {
     if (screen.id == 'cover_flow_view') {
       return _buildCoverFlowView(pod);
     }
+    if (screen.id == 'playlist_name') {
+      return Column(
+        children: [
+          _PlaylistNameField(
+            token: pod.playlistNameToken,
+            initial: pod.playlistDraft,
+            textColor: widget.theme.lcdText,
+            hintColor: widget.theme.lcdSubtext,
+            onChanged: pod.setPlaylistDraft,
+            onSubmit: pod.commitPlaylistName,
+          ),
+          Expanded(child: _buildMenuList(pod, screen, selectedIdx)),
+        ],
+      );
+    }
 
     if (screen.isSplitView) {
       return Row(
@@ -1557,4 +1572,75 @@ class _PlayTriangleClipper extends CustomClipper<Path> {
 
   @override
   bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
+}
+
+class _PlaylistNameField extends StatefulWidget {
+  final int token;
+  final String initial;
+  final Color textColor;
+  final Color hintColor;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onSubmit;
+
+  const _PlaylistNameField({
+    required this.token,
+    required this.initial,
+    required this.textColor,
+    required this.hintColor,
+    required this.onChanged,
+    required this.onSubmit,
+  });
+
+  @override
+  State<_PlaylistNameField> createState() => _PlaylistNameFieldState();
+}
+
+class _PlaylistNameFieldState extends State<_PlaylistNameField> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initial,
+  );
+
+  @override
+  void didUpdateWidget(covariant _PlaylistNameField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.token != oldWidget.token && _controller.text != widget.initial) {
+      _controller.text = widget.initial;
+      _controller.selection = TextSelection.collapsed(
+        offset: _controller.text.length,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+      child: TextField(
+        controller: _controller,
+        autofocus: true,
+        cursorColor: ClassicGlass.progressBlue,
+        style: TextStyle(
+          color: widget.textColor,
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+        ),
+        textInputAction: TextInputAction.done,
+        decoration: InputDecoration(
+          isDense: true,
+          hintText: '播放列表名称',
+          hintStyle: TextStyle(color: widget.hintColor, fontSize: 15),
+          contentPadding: const EdgeInsets.symmetric(vertical: 8),
+          border: InputBorder.none,
+        ),
+        onChanged: widget.onChanged,
+        onSubmitted: (_) => widget.onSubmit(),
+      ),
+    );
+  }
 }
