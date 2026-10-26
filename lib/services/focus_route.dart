@@ -49,3 +49,38 @@ bool shouldReclaimFocus({
 }) {
   return listening && awaitingReturn && !otherAppPlaying;
 }
+
+/// Whether one playback-configuration row should pause LikePod.
+///
+/// Only a started player owned by a different app. Our own player, a
+/// paused row, and a row whose uid cannot be read must not: vc35 treated
+/// those as "someone else", so starting a song paused it, the reclaim
+/// started it again, and the loop force-closed the process.
+/// Mirrors `PlaybackFocus` (uid below 10000 is not an app uid).
+bool pauseForForeignPlayback({
+  required int? ownerUid,
+  required int selfUid,
+  required bool started,
+}) {
+  if (!started || ownerUid == null || ownerUid == selfUid) return false;
+  if (ownerUid < 10000) return false;
+  return true;
+}
+
+/// Whether a row should hold an armed yield instead of requesting focus.
+///
+/// A confirmed other app always waits. An unreadable started row waits
+/// only while we are already paused and music is still active, so a stale
+/// row for our own track cannot pin the yield open.
+bool foreignPlaybackBlocksReclaim({
+  required int? ownerUid,
+  required int selfUid,
+  required bool started,
+  required bool selfPlaying,
+  required bool musicActive,
+}) {
+  if (!started || ownerUid == selfUid) return false;
+  if (ownerUid != null && ownerUid >= 10000) return true;
+  if (selfPlaying) return false;
+  return musicActive;
+}

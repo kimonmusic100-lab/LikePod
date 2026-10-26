@@ -26,6 +26,11 @@ import androidx.annotation.RequiresApi
  * (manual pause) clears the arm and must not resume. Cold start never arms.
  * Coming to the foreground only rechecks an arm that already exists; it is
  * not itself a reason to play. The Home transition is not another app.
+ *
+ * A playback row pauses us only when its uid is a different app. Our own
+ * player, and a row whose uid cannot be read, must not: on PME110 that
+ * misread turned "play" into pause → reclaim → play until the process died.
+ * The same rule is in `pauseForForeignPlayback`.
  */
 object PlaybackFocus {
     private const val TAG = "LikePod"
@@ -52,6 +57,8 @@ object PlaybackFocus {
     private var hostLeaving = false
     private var lossDuringLeave = false
     private var suppressGain = false
+    private var reclaimPosted = false
+    private var hiddenTried = false
     private var mainHandler: Handler? = null
     private var appContext: Context? = null
     private var watcher: AudioManager.AudioPlaybackCallback? = null
@@ -74,7 +81,7 @@ object PlaybackFocus {
         lossDuringLeave = false
         Log.i(TAG, "host leave settled missedLoss=$missed")
         if (!listening) return
-        if (otherAppActive()) {
+        if (confirmedForeign()) {
             markYield()
         } else if (missed && PlaybackAnchor.isPlaying()) {
             refreshOwnGrant()
@@ -95,6 +102,7 @@ object PlaybackFocus {
         lossDuringLeave = false
         listening = false
         granted = false
+        reclaimPosted = false
         mainHandler?.removeCallbacks(reclaimRunnable)
         unregisterWatcher()
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -122,6 +130,16 @@ object PlaybackFocus {
         this.mainHandler = handler
         listening = true
         ensureWatcher(context, handler)
+        // A user play (or the anchor re-holding an already playing song)
+        // is not a yield. Re-requesting focus here is what echoed a loss
+        // back into the pause path.
+        if (granted && !awaitingReturn) {
+            Log.i(TAG, "focus already granted")
+            return true
+        }
+        awaitingReturn = false
+        reclaimPosted = false
+        handler.removeCallbacks(reclaimRunnable)
         val code = requestFocus(context, attributes, handler)
         granted = code == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         Log.i(TAG, "focus request code=$code granted=$granted")
@@ -199,6 +217,7 @@ object PlaybackFocus {
                 }
                 granted = true
                 awaitingReturn = false
+                reclaimPosted = false
                 mainHandler?.removeCallbacks(reclaimRunnable)
                 Log.i(TAG, "focus gain after another app released audio")
                 onGained?.invoke()
@@ -216,16 +235,32 @@ object PlaybackFocus {
     }
 
     private fun scheduleReclaim() {
+        postReclaim(RECLAIM_DELAY_MS)
+    }
+
+    /**
+     * One pending check. Playback callbacks must not keep postponing it:
+     * our own track and the click pool update the list often, and a reset
+     * on every update never reaches the reclaim.
+     */
+    private fun postReclaim(delayMs: Long) {
         val handler = mainHandler ?: return
-        handler.removeCallbacks(reclaimRunnable)
-        if (!listening || !awaitingReturn || hostLeaving) return
-        handler.postDelayed(reclaimRunnable, RECLAIM_DELAY_MS)
+        if (!listening || !awaitingReturn || hostLeaving || reclaimPosted) return
+        reclaimPosted = true
+        handler.postDelayed(reclaimRunnable, delayMs)
     }
 
     private fun reclaimNow() {
+        reclaimPosted = false
         if (!listening || !awaitingReturn || hostLeaving) return
-        if (otherAppActive()) {
-            mainHandler?.postDelayed(reclaimRunnable, RECLAIM_POLL_MS)
+        if (blocksReclaim()) {
+            postReclaim(RECLAIM_POLL_MS)
+            return
+        }
+        if (PlaybackAnchor.isPlaying()) {
+            // Already audible. Completing the arm must not call play again.
+            awaitingReturn = false
+            granted = true
             return
         }
         val context = appContext ?: return
@@ -243,7 +278,7 @@ object PlaybackFocus {
         } else {
             // DELAYED or a refused request still needs another look. A GAIN
             // callback can arrive first; this poll covers the one that does not.
-            mainHandler?.postDelayed(reclaimRunnable, RECLAIM_POLL_MS)
+            postReclaim(RECLAIM_POLL_MS)
         }
     }
 
@@ -265,10 +300,12 @@ object PlaybackFocus {
         val callback = object : AudioManager.AudioPlaybackCallback() {
             override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>) {
                 if (!listening || hostLeaving) return
-                if (otherAppActive()) {
+                // Pause only for a positively different app. An unreadable
+                // uid is not one: that was our own player on PME110.
+                if (confirmedForeign()) {
                     if (PlaybackAnchor.isPlaying()) markYield()
                     else scheduleReclaim()
-                } else {
+                } else if (awaitingReturn) {
                     scheduleReclaim()
                 }
             }
@@ -287,34 +324,75 @@ object PlaybackFocus {
         audioManager.unregisterAudioPlaybackCallback(callback)
     }
 
-    /**
-     * True when some other app still has a started player.
-     *
-     * [AudioPlaybackConfiguration.getClientUid] and `getPlayerState` are
-     * hidden, so they are not in android.jar. Read them by reflection and
-     * fall back to the public `toString` (`u/pid:` and `state:started`).
-     * A started player with an unknown owner still counts, so a miss does
-     * not request focus and steal the other app. A player that is clearly
-     * paused does not count. [reclaimNow] requests focus only when this
-     * is false.
-     */
-    private fun otherAppActive(): Boolean {
-        val app = appContext ?: return false
-        if (Build.VERSION.SDK_INT < 26) return false
-        val audioManager = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val myUid = Process.myUid()
-        return audioManager.activePlaybackConfigurations.any { config ->
-            foreignStarted(config, myUid)
+    /** Started player whose uid is a different application. */
+    private fun confirmedForeign(): Boolean {
+        return playbackRows().any { row ->
+            row.started && row.ownerUid != null &&
+                row.ownerUid != row.selfUid && row.ownerUid >= Process.FIRST_APPLICATION_UID
         }
     }
 
-    private fun foreignStarted(config: AudioPlaybackConfiguration, myUid: Int): Boolean {
-        val described = config.toString()
-        val uid = clientUid(config) ?: uidIn(described)
-        if (uid == myUid) return false
-        val started = playerStarted(config) ?: stateIn(described)?.let { it == "started" }
-        if (started != true) return false
-        return true
+    /**
+     * True while reclaim must wait.
+     * Same cases as [foreignPlaybackBlocksReclaim] in Dart.
+     */
+    private fun blocksReclaim(): Boolean {
+        val rows = playbackRows()
+        if (rows.any { row ->
+                row.started && row.ownerUid != null &&
+                    row.ownerUid != row.selfUid &&
+                    row.ownerUid >= Process.FIRST_APPLICATION_UID
+            }
+        ) {
+            return true
+        }
+        val unknownStarted = rows.any { row -> row.started && row.ownerUid == null }
+        if (!unknownStarted || PlaybackAnchor.isPlaying()) return false
+        val app = appContext ?: return true
+        val audioManager = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        return audioManager.isMusicActive
+    }
+
+    private data class PlaybackRow(val ownerUid: Int?, val selfUid: Int, val started: Boolean)
+
+    private fun playbackRows(): List<PlaybackRow> {
+        val app = appContext ?: return emptyList()
+        if (Build.VERSION.SDK_INT < 26) return emptyList()
+        allowHiddenPlaybackApis()
+        val audioManager = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val myUid = Process.myUid()
+        return audioManager.activePlaybackConfigurations.map { config ->
+            val described = config.toString()
+            val uid = clientUid(config) ?: uidIn(described)
+            val owner = when {
+                uid == null -> null
+                uid == myUid -> myUid
+                uid >= Process.FIRST_APPLICATION_UID -> uid
+                else -> null
+            }
+            val started = playerStarted(config) ?: (stateIn(described) == "started")
+            PlaybackRow(owner, myUid, started)
+        }
+    }
+
+    /** Lets [AudioPlaybackConfiguration.getClientUid] succeed on API 28+. */
+    private fun allowHiddenPlaybackApis() {
+        if (hiddenTried) return
+        hiddenTried = true
+        try {
+            val vmRuntime = Class.forName("dalvik.system.VMRuntime")
+            val runtime = vmRuntime.getDeclaredMethod("getRuntime").invoke(null)
+            val setExemptions = vmRuntime.getDeclaredMethod(
+                "setHiddenApiExemptions",
+                Array<String>::class.java,
+            )
+            setExemptions.invoke(
+                runtime,
+                arrayOf("Landroid/media/AudioPlaybackConfiguration;"),
+            )
+        } catch (error: Throwable) {
+            Log.i(TAG, "playback uid exemption skipped: ${error.message}")
+        }
     }
 
     private fun clientUid(config: AudioPlaybackConfiguration): Int? {

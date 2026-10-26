@@ -15,35 +15,48 @@ import java.io.File
  * was removed, the sonification tick was silent on the output in use.
  *
  * [AudioAttributes.USAGE_MEDIA] shares speaker, Bluetooth, and mixer-routed
- * USB with the song. SoundPool does not request audio focus, so a tick does
- * not pause playback. 0.10 is −20 dB under full scale: quiet next to the
- * music, and still a clear tick. The old 0.016 (−36 dB) was under the noise
- * floor once it was no longer mixed into the DAC packets.
+ * USB with the song. [AudioAttributes.FLAG_LOW_LATENCY] asks for a short
+ * buffer so the tick lands with the finger. SoundPool does not request
+ * audio focus. The pool is created once and kept warm.
+ *
+ * 0.26 is about −12 dB under full scale: quieter than the song, and loud
+ * enough on Bluetooth and a mixer-routed USB DAC. 0.10 was audible on
+ * PME110 but too soft.
  */
 object WheelSounds {
     private const val TAG = "LikePod"
 
-    /** Linear amplitude. 0.10 is −20 dB under the music stream. */
-    private const val CLICK_VOLUME = 0.10f
+    /** Linear amplitude. Keep in sync with [SoundService.clickVolume]. */
+    private const val CLICK_VOLUME = 0.26f
 
     private var pool: SoundPool? = null
     private var tickId = 0
     private var selectId = 0
+    private var tickReady = false
+    private var selectReady = false
     private val pending = ArrayList<String>()
 
     fun prepare(context: Context) {
         ensure(context.applicationContext)
     }
 
-    /** True when a tick was started here. False lets Dart try its own player. */
+    /**
+     * True when this pool will play the tick, including one still loading.
+     * False only when the asset is missing, so Dart can try its own player.
+     * Returning false while the sample is loading made Dart open a second,
+     * slower player for the same click.
+     */
     fun play(context: Context, kind: String): Boolean {
         val app = context.applicationContext
         ensure(app)
-        val pooled = playPool(kind)
-        if (!pooled) {
+        if (playPool(kind)) return true
+        val id = soundId(kind)
+        val ready = if (kind == "select") selectReady else tickReady
+        if (pool != null && id != 0 && !ready) {
             pending.add(kind)
+            return true
         }
-        return pooled
+        return false
     }
 
     private fun ensure(app: Context) {
@@ -51,13 +64,17 @@ object WheelSounds {
         val attrs = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .setFlags(AudioAttributes.FLAG_LOW_LATENCY)
             .build()
         val created = SoundPool.Builder()
             .setMaxStreams(8)
             .setAudioAttributes(attrs)
             .build()
-        created.setOnLoadCompleteListener { _, _, status ->
-            if (status != 0) return@setOnLoadCompleteListener
+        created.setOnLoadCompleteListener { _, sampleId, status ->
+            if (status == 0) {
+                if (sampleId == tickId) tickReady = true
+                if (sampleId == selectId) selectReady = true
+            }
             val queued = pending.toList()
             pending.clear()
             for (kind in queued) {
@@ -75,10 +92,15 @@ object WheelSounds {
         }
     }
 
+    private fun soundId(kind: String): Int {
+        return if (kind == "select") selectId else tickId
+    }
+
     private fun playPool(kind: String): Boolean {
         val soundPool = pool ?: return false
-        val id = if (kind == "select") selectId else tickId
-        if (id == 0) return false
+        val id = soundId(kind)
+        val ready = if (kind == "select") selectReady else tickReady
+        if (id == 0 || !ready) return false
         val stream = soundPool.play(id, CLICK_VOLUME, CLICK_VOLUME, 1, 0, 1f)
         return stream != 0
     }

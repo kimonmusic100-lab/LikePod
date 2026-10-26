@@ -21,6 +21,7 @@ object PlaybackAnchor {
     fun isPlaying(): Boolean = playing
 
     fun setPlaying(context: Context, active: Boolean) {
+        if (playing == active && (!active || serviceStarted)) return
         playing = active
         if (active) {
             serviceStarted = true

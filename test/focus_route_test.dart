@@ -67,4 +67,86 @@ void main() {
     expect(pauseForFocusChange('duck', inBackground: true), isTrue);
     expect(pauseForFocusChange('duck', inBackground: false), isFalse);
   });
+
+  test('our own or unreadable player must not pause playback', () {
+    const self = 10234;
+    expect(
+      pauseForForeignPlayback(ownerUid: self, selfUid: self, started: true),
+      isFalse,
+      reason: 'the track we just started',
+    );
+    expect(
+      pauseForForeignPlayback(ownerUid: null, selfUid: self, started: true),
+      isFalse,
+      reason: 'hidden uid must not look like another app',
+    );
+    expect(
+      pauseForForeignPlayback(ownerUid: 0, selfUid: self, started: true),
+      isFalse,
+    );
+    expect(
+      pauseForForeignPlayback(ownerUid: 10400, selfUid: self, started: false),
+      isFalse,
+    );
+    expect(
+      pauseForForeignPlayback(ownerUid: 10400, selfUid: self, started: true),
+      isTrue,
+    );
+  });
+
+  test('reclaim waits for another app and not for our own row', () {
+    const self = 10234;
+    expect(
+      foreignPlaybackBlocksReclaim(
+        ownerUid: 10400,
+        selfUid: self,
+        started: true,
+        selfPlaying: false,
+        musicActive: true,
+      ),
+      isTrue,
+    );
+    expect(
+      foreignPlaybackBlocksReclaim(
+        ownerUid: self,
+        selfUid: self,
+        started: true,
+        selfPlaying: true,
+        musicActive: true,
+      ),
+      isFalse,
+    );
+    expect(
+      foreignPlaybackBlocksReclaim(
+        ownerUid: null,
+        selfUid: self,
+        started: true,
+        selfPlaying: true,
+        musicActive: true,
+      ),
+      isFalse,
+      reason: 'unreadable row while we are playing is our own track',
+    );
+    expect(
+      foreignPlaybackBlocksReclaim(
+        ownerUid: null,
+        selfUid: self,
+        started: true,
+        selfPlaying: false,
+        musicActive: false,
+      ),
+      isFalse,
+      reason: 'stale started row with no music must not pin the yield',
+    );
+    expect(
+      foreignPlaybackBlocksReclaim(
+        ownerUid: null,
+        selfUid: self,
+        started: true,
+        selfPlaying: false,
+        musicActive: true,
+      ),
+      isTrue,
+    );
+  });
 }

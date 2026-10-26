@@ -31,19 +31,35 @@ class MusicService {
   bool _intendPlay = false;
   final FocusYield _focusYield = FocusYield();
 
+  /// Bumps on every yield pause, yield resume, and user transport change.
+  /// A late pause from the old generation must not stop the newer play.
+  int _transportEpoch = 0;
+
   /// Another app took the output. Pause the player but keep the focus
   /// request, so Android can hand it back when that app lets go.
   void _onNativeFocusLost() {
     final playing = _engine.player?.playing ?? false;
     _focusYield.noteFocusLost(active: playing || _intendPlay);
     if (!_focusYield.pausedByFocusLoss) return;
-    unawaited(_pauseYieldedPlayer());
+    final epoch = ++_transportEpoch;
+    unawaited(_pauseYieldedPlayer(epoch));
   }
 
-  Future<void> _pauseYieldedPlayer() async {
+  Future<void> _pauseYieldedPlayer(int epoch) async {
     final player = _engine.player;
-    if (player == null || !player.playing) return;
-    await player.pause();
+    if (player == null || !player.playing || epoch != _transportEpoch) return;
+    try {
+      await player.pause();
+    } catch (e) {
+      debugPrint('yield pause failed: $e');
+    }
+    if (epoch != _transportEpoch && _intendPlay) {
+      try {
+        await player.play();
+      } catch (e) {
+        debugPrint('yield pause undo failed: $e');
+      }
+    }
   }
 
   bool _resumeInFlight = false;
@@ -60,11 +76,12 @@ class MusicService {
       _focusYield.noteUserPause();
       return;
     }
-    unawaited(_resumeAfterYield());
+    final epoch = ++_transportEpoch;
+    unawaited(_resumeAfterYield(epoch));
   }
 
-  Future<void> _resumeAfterYield() async {
-    if (_resumeInFlight) return;
+  Future<void> _resumeAfterYield(int epoch) async {
+    if (_resumeInFlight || epoch != _transportEpoch) return;
     _resumeInFlight = true;
     try {
       await resume();
@@ -483,6 +500,7 @@ class MusicService {
     }
 
     try {
+      _transportEpoch++;
       _focusYield.noteUserPause();
       _intendPlay = play;
       var focusGranted = true;
@@ -552,6 +570,7 @@ class MusicService {
   }
 
   Future<void> pause() async {
+    _transportEpoch++;
     _focusYield.noteUserPause();
     _intendPlay = false;
     if (!kIsWeb && Platform.isAndroid) {
@@ -566,6 +585,7 @@ class MusicService {
 
   Future<void> resume() async {
     if (!ensurePlayer()) return;
+    _transportEpoch++;
     final yielded = _focusYield.pausedByFocusLoss;
     _focusYield.noteUserPause();
     await _ensureNotificationPermission();

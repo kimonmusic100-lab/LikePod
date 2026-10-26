@@ -49,6 +49,7 @@ class MainActivity : AudioServiceActivity() {
     }
 
     private val CHANNEL = "com.likepod/media"
+    private val WHEEL_CHANNEL = "com.likepod/wheel"
     private var mediaChannel: MethodChannel? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var deviceCallbackRegistered = false
@@ -59,6 +60,22 @@ class MainActivity : AudioServiceActivity() {
         super.configureFlutterEngine(flutterEngine)
         val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         mediaChannel = channel
+        // Clicks do not share the media channel. A scan or focus call on
+        // that channel would hold the tick until it returned.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, WHEEL_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "prepareWheelSound" -> {
+                        WheelSounds.prepare(this)
+                        result.success(true)
+                    }
+                    "playWheelSound" -> {
+                        val kind = call.argument<String>("kind") ?: "tick"
+                        result.success(WheelSounds.play(this, kind))
+                    }
+                    else -> result.notImplemented()
+                }
+            }
         WheelSounds.prepare(this)
         registerOutputWatcher()
 
