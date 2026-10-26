@@ -4,7 +4,6 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
-import android.media.AudioPlaybackCallback
 import android.media.AudioPlaybackConfiguration
 import android.os.Build
 import android.os.Handler
@@ -55,7 +54,7 @@ object PlaybackFocus {
     private var suppressGain = false
     private var mainHandler: Handler? = null
     private var appContext: Context? = null
-    private var watcher: AudioPlaybackCallback? = null
+    private var watcher: AudioManager.AudioPlaybackCallback? = null
 
     fun isGranted(): Boolean = listening && granted
 
@@ -241,6 +240,10 @@ object PlaybackFocus {
             granted = true
             awaitingReturn = false
             onGained?.invoke()
+        } else {
+            // DELAYED or a refused request still needs another look. A GAIN
+            // callback can arrive first; this poll covers the one that does not.
+            mainHandler?.postDelayed(reclaimRunnable, RECLAIM_POLL_MS)
         }
     }
 
@@ -259,7 +262,7 @@ object PlaybackFocus {
     private fun ensureWatcher(context: Context, handler: Handler) {
         appContext = context.applicationContext
         if (Build.VERSION.SDK_INT < 26 || watcher != null) return
-        val callback = object : AudioPlaybackCallback() {
+        val callback = object : AudioManager.AudioPlaybackCallback() {
             override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>) {
                 if (!listening || hostLeaving) return
                 if (otherAppActive()) {
@@ -284,20 +287,80 @@ object PlaybackFocus {
         audioManager.unregisterAudioPlaybackCallback(callback)
     }
 
+    /**
+     * True when some other app still has a started player.
+     *
+     * [AudioPlaybackConfiguration.getClientUid] and `getPlayerState` are
+     * hidden, so they are not in android.jar. Read them by reflection and
+     * fall back to the public `toString` (`u/pid:` and `state:started`).
+     * A started player with an unknown owner still counts, so a miss does
+     * not request focus and steal the other app. A player that is clearly
+     * paused does not count. [reclaimNow] requests focus only when this
+     * is false.
+     */
     private fun otherAppActive(): Boolean {
         val app = appContext ?: return false
         if (Build.VERSION.SDK_INT < 26) return false
         val audioManager = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val myUid = Process.myUid()
         return audioManager.activePlaybackConfigurations.any { config ->
-            if (config.clientUid == myUid) return@any false
-            if (Build.VERSION.SDK_INT >= 31) {
-                config.playerState == AudioPlaybackConfiguration.PLAYER_STATE_STARTED
-            } else {
-                @Suppress("DEPRECATION")
-                config.isActive
-            }
+            foreignStarted(config, myUid)
         }
+    }
+
+    private fun foreignStarted(config: AudioPlaybackConfiguration, myUid: Int): Boolean {
+        val described = config.toString()
+        val uid = clientUid(config) ?: uidIn(described)
+        if (uid == myUid) return false
+        val started = playerStarted(config) ?: stateIn(described)?.let { it == "started" }
+        if (started != true) return false
+        return true
+    }
+
+    private fun clientUid(config: AudioPlaybackConfiguration): Int? {
+        return try {
+            val value = AudioPlaybackConfiguration::class.java
+                .getMethod("getClientUid")
+                .invoke(config)
+            (value as? Int)?.takeIf { it >= 0 }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /** AOSP `PLAYER_STATE_STARTED` is 2. The field is hidden in android.jar. */
+    private fun playerStarted(config: AudioPlaybackConfiguration): Boolean? {
+        return try {
+            if (Build.VERSION.SDK_INT >= 31) {
+                val state = AudioPlaybackConfiguration::class.java
+                    .getMethod("getPlayerState")
+                    .invoke(config) as? Int ?: return null
+                val started = try {
+                    AudioPlaybackConfiguration::class.java
+                        .getField("PLAYER_STATE_STARTED")
+                        .getInt(null)
+                } catch (_: Throwable) {
+                    2
+                }
+                state == started
+            } else {
+                AudioPlaybackConfiguration::class.java
+                    .getMethod("isActive")
+                    .invoke(config) as? Boolean
+            }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun uidIn(described: String): Int? {
+        val match = Regex("""u/pid:(\d+)/""").find(described) ?: return null
+        return match.groupValues[1].toIntOrNull()
+    }
+
+    private fun stateIn(described: String): String? {
+        val match = Regex("""(?<![A-Za-z])state:([A-Za-z]+)""").find(described) ?: return null
+        return match.groupValues[1].lowercase()
     }
 
     @RequiresApi(26)

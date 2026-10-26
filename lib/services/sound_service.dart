@@ -6,10 +6,10 @@ import 'package:flutter/services.dart';
 
 /// Wheel ticks and center-button clicks.
 ///
-/// Android plays these from a SoundPool that starts a new stream on every
-/// step. A media-player pool only survives one `stop()` and then stays quiet.
-/// While exclusive USB is open, the same tick is also mixed into the DAC
-/// packets, because the system mixer cannot reach a detached USB interface.
+/// Android plays these from a SoundPool on the music stream, so the tick
+/// follows speaker, Bluetooth, and a USB DAC the mixer already selected.
+/// The pool does not request audio focus. A media-player pool only survives
+/// one `stop()` and then stays quiet, so each clip is loaded again.
 class SoundService {
   static final SoundService _instance = SoundService._internal();
   factory SoundService() => _instance;
@@ -17,13 +17,13 @@ class SoundService {
 
   static const MethodChannel _channel = MethodChannel('com.likepod/media');
 
-  /// Same −36 dB linear level as the Android SoundPool click.
-  static const double _clickVolume = 0.016;
+  /// Same −20 dB linear level as the Android SoundPool click.
+  static const double clickVolume = 0.10;
 
   static final AudioContext _mixContext = AudioContext(
     android: const AudioContextAndroid(
       contentType: AndroidContentType.sonification,
-      usageType: AndroidUsageType.assistanceSonification,
+      usageType: AndroidUsageType.media,
       audioFocus: AndroidAudioFocus.none,
     ),
   );
@@ -157,7 +157,7 @@ class _ClipRing {
   Future<void> _retrigger(AudioPlayer player) async {
     try {
       await player.seek(Duration.zero);
-      await player.setVolume(SoundService._clickVolume);
+      await player.setVolume(SoundService.clickVolume);
       await player.resume();
     } catch (e) {
       debugPrint('Click sound failed: $e');

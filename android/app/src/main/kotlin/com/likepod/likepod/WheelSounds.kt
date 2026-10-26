@@ -7,14 +7,24 @@ import android.util.Log
 import java.io.File
 
 /**
- * Click-wheel ticks through the system mixer. SoundPool follows the
- * current output, including a USB DAC that Android has already routed.
+ * Click-wheel ticks on the music stream.
+ *
+ * Sonification follows the touch/system stream. That stream is often muted,
+ * and it does not follow Bluetooth or a USB DAC the mixer already selected.
+ * Exclusive USB used to mix the tick into the DAC packets; after that path
+ * was removed, the sonification tick was silent on the output in use.
+ *
+ * [AudioAttributes.USAGE_MEDIA] shares speaker, Bluetooth, and mixer-routed
+ * USB with the song. SoundPool does not request audio focus, so a tick does
+ * not pause playback. 0.10 is −20 dB under full scale: quiet next to the
+ * music, and still a clear tick. The old 0.016 (−36 dB) was under the noise
+ * floor once it was no longer mixed into the DAC packets.
  */
 object WheelSounds {
     private const val TAG = "LikePod"
 
-    /** Linear amplitude. 0.016 is −36 dB, a soft click on speaker and Bluetooth. */
-    private const val CLICK_VOLUME = 0.016f
+    /** Linear amplitude. 0.10 is −20 dB under the music stream. */
+    private const val CLICK_VOLUME = 0.10f
 
     private var pool: SoundPool? = null
     private var tickId = 0
@@ -39,7 +49,7 @@ object WheelSounds {
     private fun ensure(app: Context) {
         if (pool != null) return
         val attrs = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+            .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build()
         val created = SoundPool.Builder()
