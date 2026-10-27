@@ -1169,7 +1169,6 @@ class _LcdScreenState extends State<LcdScreen> {
                 const SizedBox(height: 6),
                 Text('作者：Kimonmusic', style: lineStyle),
                 Text('复古滚轮播放器', style: infoStyle),
-                Text('与 Apple 无关', style: infoStyle),
               ],
             ),
           ),

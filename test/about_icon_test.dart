@@ -58,7 +58,7 @@ void main() {
     expect(find.text('Version 0.1.0'), findsOneWidget);
     expect(find.text('作者：Kimonmusic'), findsOneWidget);
     expect(find.text('复古滚轮播放器'), findsOneWidget);
-    expect(find.text('与 Apple 无关'), findsOneWidget);
+    expect(find.text('与 Apple 无关'), findsNothing);
     expect(find.text('开源许可'), findsOneWidget);
     final content = tester.getRect(find.byKey(const Key('about_content')));
     final host = tester.getRect(find.byType(LcdScreen));
