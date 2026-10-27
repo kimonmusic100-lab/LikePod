@@ -1131,47 +1131,54 @@ class _LcdScreenState extends State<LcdScreen> {
   Widget _buildAboutView(PodState pod, PodMenuScreen screen, int selectedIdx) {
     final infoStyle = TextStyle(color: widget.theme.lcdSubtext, fontSize: 11);
     final lineStyle = TextStyle(color: widget.theme.lcdText, fontSize: 11);
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 6, 12, 2),
-          child: Column(
-            children: [
-              Image.asset(
-                'assets/brand/likepod.png',
-                key: const Key('about_app_icon'),
-                width: 32,
-                height: 32,
-                filterQuality: FilterQuality.medium,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'LikePod',
-                style: TextStyle(
-                  color: widget.theme.lcdText,
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
+    return Center(
+      child: Column(
+        key: const Key('about_content'),
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 2),
+            child: Column(
+              children: [
+                Image.asset(
+                  'assets/brand/likepod.png',
+                  key: const Key('about_app_icon'),
+                  width: 32,
+                  height: 32,
+                  filterQuality: FilterQuality.medium,
                 ),
-              ),
-              const SizedBox(height: 2),
-              // 版本号经 package_info_plus 读自 pubspec,永不脱钩。
-              FutureBuilder<PackageInfo>(
-                future: PackageInfo.fromPlatform(),
-                builder: (context, snapshot) {
-                  final version = snapshot.data?.version;
-                  if (version == null) return const SizedBox.shrink();
-                  return Text('Version $version', style: infoStyle);
-                },
-              ),
-              const SizedBox(height: 6),
-              Text('作者：Kimonmusic', style: lineStyle),
-              Text('复古滚轮播放器', style: infoStyle),
-              Text('与 Apple 无关', style: infoStyle),
-            ],
+                const SizedBox(height: 4),
+                Text(
+                  'LikePod',
+                  style: TextStyle(
+                    color: widget.theme.lcdText,
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                // 版本号经 package_info_plus 读自 pubspec,永不脱钩。
+                FutureBuilder<PackageInfo>(
+                  future: PackageInfo.fromPlatform(),
+                  builder: (context, snapshot) {
+                    final version = snapshot.data?.version;
+                    if (version == null) return const SizedBox.shrink();
+                    return Text('Version $version', style: infoStyle);
+                  },
+                ),
+                const SizedBox(height: 6),
+                Text('作者：Kimonmusic', style: lineStyle),
+                Text('复古滚轮播放器', style: infoStyle),
+                Text('与 Apple 无关', style: infoStyle),
+              ],
+            ),
           ),
-        ),
-        Expanded(child: _buildMenuList(pod, screen, selectedIdx)),
-      ],
+          SizedBox(
+            height: _menuRowHeight,
+            child: _buildMenuList(pod, screen, selectedIdx),
+          ),
+        ],
+      ),
     );
   }
 
