@@ -44,7 +44,9 @@ void main() {
     );
   });
 
-  testWidgets('the phone shell clips to the system corners', (tester) async {
+  testWidgets('the phone shell follows the system corners without clipping', (
+    tester,
+  ) async {
     SharedPreferences.setMockInitialValues({
       'sound_enabled': false,
       'haptics_enabled': false,
@@ -58,7 +60,7 @@ void main() {
     final shell = tester.widget<Container>(find.byKey(const Key('pod_chassis_shell')));
     final decoration = shell.decoration! as BoxDecoration;
     expect(decoration.borderRadius, system);
-    expect(shell.clipBehavior, Clip.antiAlias);
+    expect(shell.clipBehavior, Clip.none);
     expect(decoration.border, isNull);
     pod.dispose();
   });
@@ -97,7 +99,7 @@ void main() {
     final shell = tester.widget<Container>(find.byKey(const Key('pod_chassis_shell')));
     final decoration = shell.decoration! as BoxDecoration;
     expect(decoration.borderRadius, BorderRadius.circular(36));
-    expect(shell.clipBehavior, Clip.antiAlias);
+    expect(shell.clipBehavior, Clip.none);
     pod.dispose();
   });
 }

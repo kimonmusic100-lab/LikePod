@@ -84,7 +84,9 @@ class PodChassis extends StatelessWidget {
             key: const Key('pod_chassis_shell'),
             width: effectiveWidth,
             height: totalHeight,
-            clipBehavior: outerRadius == null ? Clip.none : Clip.antiAlias,
+            // Round the face only. Clipping this shell also clips the LCD's
+            // dot-column painter, which then draws nothing on device.
+            clipBehavior: Clip.none,
             decoration: BoxDecoration(
               // Shell face: theme color with a subtle bevel
               gradient: LinearGradient(
