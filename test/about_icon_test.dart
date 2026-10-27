@@ -57,7 +57,32 @@ void main() {
     expect(find.text('LikePod'), findsWidgets);
     expect(find.text('Version 0.1.0'), findsOneWidget);
     expect(find.text('作者：Kimonmusic'), findsOneWidget);
+    expect(find.text('复古滚轮播放器'), findsOneWidget);
+    expect(find.text('与 Apple 无关'), findsOneWidget);
+    expect(find.text('开源许可'), findsOneWidget);
     await _saveShot(tester, 'about-vc50.png');
+
+    pod.onSelect();
+    await tester.pump();
+    expect(pod.currentScreen.id, 'open_source_notices');
+    expect(find.text('LikePod'), findsWidgets);
+    expect(find.text('MIT, Kimonmusic'), findsOneWidget);
+    final titles = pod.currentScreen.items.map((item) => item.title).toList();
+    expect(titles, contains('Media3 ExoPlayer'));
+    expect(titles, contains('Material Icons'));
+    expect(titles, contains('Noto Sans SC'));
+    expect(titles.join('\n'), isNot(contains('U2')));
+    expect(titles.join('\n'), isNot(contains('iPod')));
+
+    await tester.scrollUntilVisible(
+      find.text('Noto Sans SC'),
+      80,
+      scrollable: find.byType(Scrollable).last,
+    );
+    expect(find.text('Noto Sans SC'), findsOneWidget);
+    expect(find.text('OFL-1.1, Adobe'), findsOneWidget);
+    expect(find.text('Material Icons'), findsOneWidget);
+    expect(find.text('CC BY 4.0'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 50));

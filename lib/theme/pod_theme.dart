@@ -5,7 +5,6 @@ enum ShellThemeType {
   classicWhite,
   stealthBlack,
   metallicSilver,
-  u2Special,
 }
 
 class PodTheme {
@@ -60,7 +59,7 @@ class PodTheme {
     required this.lcdBatteryBorder,
   });
 
-  /// The screen is always the classic color LCD; only the shell varies.
+  /// The screen palette stays the same; only the shell varies.
   static PodTheme getTheme(ShellThemeType shell) {
     // Shell properties
     Color chassis1;
@@ -115,17 +114,6 @@ class PodTheme {
         wheelRim = const Color(0xFFC0C2C8);
         wheelTxt = const Color(0xFF5A5C64);
         centerBtn = const Color(0xFFE8E9ED);
-        break;
-
-      case ShellThemeType.u2Special:
-        themeName = 'U2 Special Edition';
-        chassis1 = const Color(0xFF1A1A1C);
-        chassis2 = const Color(0xFF0F0F10);
-        bezel = const Color(0xFF333338);
-        wheel = const Color(0xFFD02824); // Bold red click wheel
-        wheelRim = const Color(0xFFA31A17);
-        wheelTxt = const Color(0xFFFFFFFF);
-        centerBtn = const Color(0xFF161618);
         break;
     }
 

@@ -326,7 +326,7 @@ class _LcdScreenState extends State<LcdScreen> {
       return _buildNowPlayingView(pod);
     }
     if (screen.id == 'about_view') {
-      return _buildAboutView();
+      return _buildAboutView(pod, screen, selectedIdx);
     }
     if (screen.id == 'cover_flow_view') {
       return _buildCoverFlowView(pod);
@@ -427,7 +427,7 @@ class _LcdScreenState extends State<LcdScreen> {
       },
     );
 
-    // Thin iPod-style scrollbar on the right for long lists (e.g. Songs).
+    // Thin scrollbar on the right for long lists (e.g. Songs).
     return RawScrollbar(
       controller: _scrollController,
       thickness: 2.5,
@@ -559,7 +559,7 @@ class _LcdScreenState extends State<LcdScreen> {
             gaplessPlayback: true,
             filterQuality: FilterQuality.medium,
           )
-        : _buildIpodMissingArtwork();
+        : _missingArtwork();
     final floats = screen.id == 'main' || screen.id == 'music';
 
     return ClipRect(
@@ -570,8 +570,8 @@ class _LcdScreenState extends State<LcdScreen> {
     );
   }
 
-  /// Light-blue square with white music note (Classic empty-cover look).
-  Widget _buildIpodMissingArtwork({double? size}) {
+  /// Light-blue square with a white music note for a missing cover.
+  Widget _missingArtwork({double? size}) {
     final iconSize = size != null ? size * 0.42 : 56.0;
     final child = Container(
       color: const Color(0xFF8EBFDA),
@@ -865,7 +865,7 @@ class _LcdScreenState extends State<LcdScreen> {
       key: const ValueKey('scrub_bar'),
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Scrub progress track with authentic iPod diamond indicator
+        // Scrub progress track with a diamond indicator
         LayoutBuilder(
           builder: (context, constraints) {
             final double barWidth = constraints.maxWidth;
@@ -1043,7 +1043,7 @@ class _LcdScreenState extends State<LcdScreen> {
               fit: BoxFit.cover,
               gaplessPlayback: true,
             )
-          : _buildIpodMissingArtwork(size: height),
+          : _missingArtwork(size: height),
     );
   }
 
@@ -1128,58 +1128,50 @@ class _LcdScreenState extends State<LcdScreen> {
     );
   }
 
-  Widget _buildAboutView() {
+  Widget _buildAboutView(PodState pod, PodMenuScreen screen, int selectedIdx) {
     final infoStyle = TextStyle(color: widget.theme.lcdSubtext, fontSize: 11);
     final lineStyle = TextStyle(color: widget.theme.lcdText, fontSize: 11);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return SingleChildScrollView(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: constraints.maxHeight),
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Image.asset(
-                      'assets/brand/likepod.png',
-                      key: const Key('about_app_icon'),
-                      width: 32,
-                      height: 32,
-                      filterQuality: FilterQuality.medium,
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'LikePod',
-                      style: TextStyle(
-                        color: widget.theme.lcdText,
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    // 版本号经 package_info_plus 读自 pubspec,永不脱钩。
-                    FutureBuilder<PackageInfo>(
-                      future: PackageInfo.fromPlatform(),
-                      builder: (context, snapshot) {
-                        final version = snapshot.data?.version;
-                        if (version == null) return const SizedBox.shrink();
-                        return Text('Version $version', style: infoStyle);
-                      },
-                    ),
-                    const SizedBox(height: 10),
-                    Text('作者：Kimonmusic', style: lineStyle),
-                  ],
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 6, 12, 2),
+          child: Column(
+            children: [
+              Image.asset(
+                'assets/brand/likepod.png',
+                key: const Key('about_app_icon'),
+                width: 32,
+                height: 32,
+                filterQuality: FilterQuality.medium,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'LikePod',
+                style: TextStyle(
+                  color: widget.theme.lcdText,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
-            ),
+              const SizedBox(height: 2),
+              // 版本号经 package_info_plus 读自 pubspec,永不脱钩。
+              FutureBuilder<PackageInfo>(
+                future: PackageInfo.fromPlatform(),
+                builder: (context, snapshot) {
+                  final version = snapshot.data?.version;
+                  if (version == null) return const SizedBox.shrink();
+                  return Text('Version $version', style: infoStyle);
+                },
+              ),
+              const SizedBox(height: 6),
+              Text('作者：Kimonmusic', style: lineStyle),
+              Text('复古滚轮播放器', style: infoStyle),
+              Text('与 Apple 无关', style: infoStyle),
+            ],
           ),
-        );
-      },
+        ),
+        Expanded(child: _buildMenuList(pod, screen, selectedIdx)),
+      ],
     );
   }
 
@@ -1380,7 +1372,7 @@ class _LcdScreenState extends State<LcdScreen> {
               fit: BoxFit.cover,
               gaplessPlayback: true,
             )
-          : _buildIpodMissingArtwork(size: size),
+          : _missingArtwork(size: size),
     );
   }
 

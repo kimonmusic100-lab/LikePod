@@ -11,6 +11,7 @@ import '../services/output_probe.dart';
 import '../services/playlist_library.dart';
 import '../services/settings_store.dart';
 import '../services/sound_service.dart';
+import '../legal/open_source_notices.dart';
 import '../theme/pod_theme.dart';
 
 enum NowPlayingSubMode { volume, scrub, rating }
@@ -60,6 +61,7 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _subModeTimer;
   final Map<int, int> _songRatings = {};
   bool _loadingSettings = false;
+  bool _retiredShellOnLoad = false;
   bool _holdPersist = false;
   bool _pendingPersist = false;
   bool _disposed = false;
@@ -92,8 +94,12 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
     if (settingsStore != null) {
       _store = settingsStore;
       _loadingSettings = true;
-      _applySettings(settingsStore.load());
+      final loaded = settingsStore.load();
+      _applySettings(loaded);
       _loadingSettings = false;
+      if (loaded.shell == retiredShellToken) {
+        _schedulePersist(immediate: true);
+      }
       _markReady();
       _initAudioListeners();
     } else {
@@ -112,12 +118,18 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
     try {
       _store = await SettingsStore.open();
       if (_disposed) return;
-      _applySettings(_store!.load());
+      final loaded = _store!.load();
+      _applySettings(loaded);
+      _retiredShellOnLoad = loaded.shell == retiredShellToken;
     } catch (e) {
       debugPrint('Settings load failed: $e');
     } finally {
       _loadingSettings = false;
       _markReady();
+    }
+    if (_retiredShellOnLoad && !_disposed) {
+      _retiredShellOnLoad = false;
+      _schedulePersist(immediate: true);
     }
     if (_disposed) return;
     if (_pendingPersist) {
@@ -154,7 +166,11 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
     _playlistDraft = value;
   }
 
+  /// Old installs may still have this shell name stored.
+  static const retiredShellToken = 'u2Special';
+
   ShellThemeType _parseShell(String name) {
+    if (name == retiredShellToken) return ShellThemeType.spaceGray;
     for (final value in ShellThemeType.values) {
       if (value.name == name) return value;
     }
@@ -611,12 +627,6 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
             hasSubmenu: false,
             onSelect: () => setShellType(ShellThemeType.stealthBlack),
           ),
-          PodMenuItem(
-            id: 'theme_u2',
-            title: 'U2 Special Edition',
-            hasSubmenu: false,
-            onSelect: () => setShellType(ShellThemeType.u2Special),
-          ),
         ],
       ),
       PodMenuItem(
@@ -969,8 +979,6 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
         return 'Stealth Black';
       case ShellThemeType.metallicSilver:
         return 'Silver';
-      case ShellThemeType.u2Special:
-        return 'U2 Edition';
     }
   }
 
@@ -1132,7 +1140,7 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     // 2. Cover Flow: Center Select plays focused album and opens Now Playing.
-    // Stack: Now Playing -> Cover Flow -> Music -> iPod main
+    // Stack: Now Playing -> Cover Flow -> Music -> main menu
     if (currentScreen.id == 'cover_flow_view' && _albums.isNotEmpty) {
       _soundService.playSelect(
         soundEnabled: _soundEnabled,
@@ -1748,12 +1756,33 @@ class PodState extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  List<PodMenuItem> _openSourceNoticeItems() {
+    return [
+      for (final notice in openSourceNotices)
+        PodMenuItem(
+          id: 'notice_${notice.id}',
+          title: notice.title,
+          subtitle: notice.detail,
+          hasSubmenu: false,
+        ),
+    ];
+  }
+
   void _openAbout() {
     final aboutScreen = PodMenuScreen(
       id: 'about_view',
       title: 'About LikePod',
       isSplitView: false,
-      items: const [],
+      items: [
+        PodMenuItem(
+          id: 'open_source_notices',
+          title: '开源许可',
+          hasSubmenu: true,
+          subMenuSplitView: false,
+          subMenuTwoLineRows: true,
+          subMenuItems: _openSourceNoticeItems,
+        ),
+      ],
     );
     _screenStack.add(aboutScreen);
     _indexStack.add(0);

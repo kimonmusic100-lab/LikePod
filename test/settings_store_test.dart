@@ -33,7 +33,7 @@ void main() {
     final store = await SettingsStore.open();
     await store.save(
       const AppSettings(
-        shell: 'u2Special',
+        shell: 'classicWhite',
         soundEnabled: false,
         hapticsEnabled: true,
         shuffle: 'songs',
@@ -54,7 +54,7 @@ void main() {
     );
 
     final loaded = store.load();
-    expect(loaded.shell, 'u2Special');
+    expect(loaded.shell, 'classicWhite');
     expect(loaded.soundEnabled, isFalse);
     expect(loaded.hapticsEnabled, isTrue);
     expect(loaded.shuffle, 'songs');
@@ -120,6 +120,36 @@ void main() {
     final loaded = store.load();
     expect(loaded.shell, 'stealthBlack');
     expect(pod.shellType, ShellThemeType.stealthBlack);
+    pod.dispose();
+  });
+
+  testWidgets('a saved retired shell falls back to space gray', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      SettingsStore.shellKey: PodState.retiredShellToken,
+    });
+    final store = await SettingsStore.open();
+    final pod = PodState(settingsStore: store);
+    addTearDown(pod.dispose);
+
+    await pod.ready;
+    expect(pod.shellType, ShellThemeType.spaceGray);
+    expect(pod.currentTheme.name, 'Space Gray');
+    await pod.flushSettings();
+    expect(store.load().shell, AppSettings.defaultShell);
+
+    final settings = pod.currentScreen.items.firstWhere(
+      (item) => item.id == 'settings',
+    );
+    final shell = settings.subMenuItems!().firstWhere(
+      (item) => item.id == 'shell_theme',
+    );
+    final names = shell.subMenuItems!().map((item) => item.title).toList();
+    expect(names, [
+      'Space Gray',
+      'Classic White',
+      'Metallic Silver',
+      'Stealth Black',
+    ]);
     pod.dispose();
   });
 }

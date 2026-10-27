@@ -1,8 +1,8 @@
 # LikePod
 
-iPod Classic 风格的本地音乐播放器，使用 Flutter 构建。
+复古滚轮播放器，使用 Flutter 构建。LikePod 与 Apple 无关。
 
-LikePod is an iPod Classic-style local music player built with Flutter.
+LikePod is a Classic-style wheel player built with Flutter. It is not affiliated with Apple.
 
 ## 运行 / Run
 
@@ -44,3 +44,9 @@ The Windows platform folder was omitted from the initial import. Regenerate it w
 ```bash
 flutter create . --platforms=windows
 ```
+
+## 许可 / License
+
+本项目采用 MIT 许可，见仓库根目录 `LICENSE`。仓库此前没有项目许可证，因此选用 MIT。第三方组件、ExoPlayer / AndroidX Media3、Material Icons 与 Noto Sans SC 的归属见 `THIRD_PARTY_NOTICES`。Noto Sans SC 子集的 OFL-1.1 全文在 `licenses/NotoSansSC-OFL.txt`。应用内「关于 → 开源许可」可以阅读同一份名单。
+
+This project is MIT licensed. See `LICENSE`. No project license was documented before, so MIT is the chosen license. Third-party components, ExoPlayer / AndroidX Media3, Material Icons, and Noto Sans SC are listed in `THIRD_PARTY_NOTICES`. The OFL-1.1 text for the Noto Sans SC subset is `licenses/NotoSansSC-OFL.txt`. The same list is readable in the app under About → 开源许可.

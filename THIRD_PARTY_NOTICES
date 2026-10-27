@@ -1,0 +1,74 @@
+LikePod third-party notices
+============================
+
+LikePod itself is MIT licensed. See LICENSE. No project license was
+documented before this file, so MIT is the license chosen for the project.
+Copyright (c) 2026 Kimonmusic.
+
+The list below covers direct dependencies, the playback stack they pull in,
+and bundled fonts and icons. Versions match pubspec.lock at the time this
+file was added. The same short list is readable in the app under
+About → 开源许可.
+
+Flutter and Dart
+----------------
+Flutter SDK. Copyright 2014 The Flutter Authors. BSD-3-Clause.
+https://github.com/flutter/flutter/blob/master/LICENSE
+
+Direct packages
+---------------
+audio_service 0.18.19. Copyright (c) 2018-2021 Ryan Heise and the project
+contributors. MIT.
+
+audioplayers 6.8.1. Copyright (c) 2017 Blue Fire. MIT.
+
+just_audio 0.10.6. Copyright (c) 2019-2020 Ryan Heise and the project
+contributors. MIT.
+
+permission_handler 13.0.2. Copyright (c) 2018 Baseflow. MIT.
+
+provider 6.1.5+1. Copyright (c) 2019 Remi Rousselet. MIT.
+
+shared_preferences 2.5.6. Copyright 2013 The Flutter Authors. BSD-3-Clause.
+
+package_info_plus 8.3.1. Copyright 2017 The Chromium Authors. BSD-3-Clause.
+
+Playback stack pulled in by just_audio / audio_service
+-------------------------------------------------------
+audio_session 0.2.4. Copyright (c) 2020 Ryan Heise and the project
+contributors. MIT.
+
+AndroidX Media3 ExoPlayer 1.4.1 (media3-exoplayer, dash, hls, and
+smoothstreaming). just_audio 0.10.6 bundles ExoPlayer and states that it is
+licensed under the Apache License, Version 2.0.
+https://www.apache.org/licenses/LICENSE-2.0
+
+rxdart 0.28.0. Apache License, Version 2.0.
+
+Other transitive packages linked into the app
+----------------------------------------------
+path_provider 2.1.6. Copyright 2013 The Flutter Authors. BSD-3-Clause.
+
+sqflite 2.4.5. Copyright (c) 2019, Alexandre Roux Tekartik. BSD-2-Clause.
+
+jni 1.1.0. Copyright 2022, the Dart project authors. BSD-3-Clause.
+
+Fonts and icons
+---------------
+Roboto, bundled by the Flutter SDK. Apache License, Version 2.0.
+
+Material Icons, bundled because pubspec.yaml sets uses-material-design.
+Licensed under the Creative Commons Attribution 4.0 International License
+(CC BY 4.0). Attribution: Material Icons by Google.
+https://creativecommons.org/licenses/by/4.0/
+
+Noto Sans SC (variable-font subset at assets/fonts/NotoSansSC-VF.ttf,
+586 glyphs, font version 2.004). Copyright 2014-2021 Adobe, with Reserved
+Font Name "Source". Licensed under the SIL Open Font License, Version 1.1.
+The license text shipped with this subset is licenses/NotoSansSC-OFL.txt.
+This file is not renamed to the Reserved Font Name.
+
+Wheel sounds
+------------
+assets/audio/tick.wav, click.wav, and select.wav were recorded by the
+project author. They are part of the MIT-licensed project.

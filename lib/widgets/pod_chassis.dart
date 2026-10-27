@@ -55,7 +55,7 @@ class PodChassis extends StatelessWidget {
             width: effectiveWidth,
             height: totalHeight,
             decoration: BoxDecoration(
-              // Authentic iPod Classic shell: polished white face with subtle bevel
+              // Shell face: theme color with a subtle bevel
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
