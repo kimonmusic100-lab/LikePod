@@ -268,9 +268,10 @@ class TrackSpectrum(
         }
 
         /**
-         * Equal slices of the FFT put bass and vocals in the left columns.
-         * These bands are equal steps on a log frequency axis from 50 Hz to
-         * 14 kHz, which is where pop music actually has energy.
+         * Mel bands from 60 Hz to 8 kHz. Equal FFT slices packed the music
+         * on the left; a log span out to 14 kHz made the wide top bands
+         * flicker on the right. Each column is the mean of its loudest
+         * quarter of bins, so one spike does not set the height.
          * [sampleRate] is millihertz, as Visualizer reports it.
          */
         fun bandsFromFft(fft: ByteArray, sampleRate: Int = 44_100_000): List<Double> {
@@ -280,26 +281,35 @@ class TrackSpectrum(
             val binHz = sampleRateHz.toDouble() / n.toDouble()
             val maxBin = n / 2 - 1
             if (maxBin < 2 || binHz <= 0.0) return List(BANDS) { 0.0 }
-            val fMin = 50.0
-            val fMax = min(14_000.0, sampleRateHz * 0.45)
+            val fMin = 60.0
+            val fMax = min(8_000.0, sampleRateHz * 0.42)
             if (fMax <= fMin * 1.5) return List(BANDS) { 0.0 }
+            val mel0 = hzToMel(fMin)
+            val mel1 = hzToMel(fMax)
             val out = ArrayList<Double>(BANDS)
             for (band in 0 until BANDS) {
-                val f0 = fMin * (fMax / fMin).pow(band.toDouble() / BANDS)
-                val f1 = fMin * (fMax / fMin).pow((band + 1).toDouble() / BANDS)
+                val f0 = melToHz(mel0 + (mel1 - mel0) * band / BANDS)
+                val f1 = melToHz(mel0 + (mel1 - mel0) * (band + 1) / BANDS)
                 val k0 = (f0 / binHz).toInt().coerceIn(1, maxBin)
                 val k1 = (ceil(f1 / binHz).toInt() - 1).coerceIn(k0, maxBin)
-                var high = 0f
+                val levels = ArrayList<Float>(k1 - k0 + 1)
                 var k = k0
                 while (k <= k1) {
-                    val level = magnitudeLevel(binMagnitude(fft, k))
-                    if (level > high) high = level
+                    levels.add(magnitudeLevel(binMagnitude(fft, k)))
                     k++
                 }
-                out.add(high.toDouble())
+                levels.sortDescending()
+                val take = max(1, (levels.size + 3) / 4)
+                var sum = 0.0
+                for (i in 0 until take) sum += levels[i]
+                out.add(sum / take)
             }
             return out
         }
+
+        fun hzToMel(hz: Double): Double = 2595.0 * ln(1.0 + hz / 700.0) / ln(10.0)
+
+        fun melToHz(mel: Double): Double = 700.0 * (10.0.pow(mel / 2595.0) - 1.0)
 
         fun captureSampleRateHz(rate: Int): Int {
             if (rate >= 100_000) return rate / 1000
@@ -319,10 +329,9 @@ class TrackSpectrum(
         }
 
         fun magnitudeLevel(mag: Float): Float {
-            val raw = (mag / 28f).coerceIn(0f, 1f)
             val db = 20.0 * ln((mag / 128.0) + 1e-4) / ln(10.0)
-            val curved = ((db + 52.0) / 52.0).toFloat().coerceIn(0f, 1f)
-            return max(raw, curved)
+            // A full-scale bin stays near 0.7 so a chorus sits mid-column.
+            return ((db + 44.0) / 62.0).toFloat().coerceIn(0f, 0.82f)
         }
 
         fun bandsFromWaveform(wave: ByteArray): List<Double> {
@@ -338,7 +347,7 @@ class TrackSpectrum(
                     if (sample > high) high = sample
                     i++
                 }
-                out.add((high / 48.0).coerceIn(0.0, 1.0))
+                out.add((high / 48.0 * 0.62).coerceIn(0.0, 0.82))
             }
             return out
         }

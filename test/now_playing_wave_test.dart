@@ -73,36 +73,43 @@ void main() {
     expect(find.text('波形特效'), findsNothing);
     await _saveShot(tester, 'now-playing-wave-dots-vc47.png');
 
-    // Log-banded pop frame after the mild per-band lift: bass on the left,
-    // vocal columns through the middle, hats toward the right.
+    // The device frame: columns near the ceiling, right side as tall as the left.
+    SpectrumFeed.instance.debugSetLevels(
+      List<double>.filled(24, 0.96),
+    );
+    await tester.pump();
+    await _saveShot(tester, 'now-playing-wave-before-tune.png');
+
+    // Tuned mel bands: mid height, bass a little taller, right side present
+    // but not leading.
     SpectrumFeed.instance.debugSetLevels(const [
-      0.83,
-      0.83,
-      1.00,
-      1.00,
-      1.00,
-      0.73,
-      0.62,
-      0.62,
-      0.53,
-      0.49,
-      0.44,
-      0.59,
+      0.50,
+      0.48,
+      0.46,
+      0.28,
+      0.38,
       0.36,
-      0.61,
+      0.30,
+      0.40,
+      0.36,
+      0.28,
       0.26,
-      0.21,
-      0.44,
-      0.00,
+      0.30,
+      0.38,
+      0.26,
       0.24,
-      0.00,
-      0.24,
-      0.00,
+      0.26,
+      0.28,
+      0.36,
+      0.28,
       0.34,
-      0.00,
+      0.26,
+      0.32,
+      0.34,
+      0.30,
     ]);
     await tester.pump();
-    await _saveShot(tester, 'now-playing-wave-balance-vc50.png');
+    await _saveShot(tester, 'now-playing-wave-tune-vc50.png');
 
     await tester.longPress(find.byKey(const Key('click_wheel_center')));
     await tester.pump();

@@ -34,6 +34,7 @@ void main() {
     final even = evenOutSpectrum(sloped);
     expect(even[0], greaterThan(0.95));
     expect(even[12], greaterThan(sloped[12]));
+    expect(even[12] - sloped[12], lessThan(0.10));
     expect(even[12], lessThan(even[0]));
     expect(even[20], 0);
     expect(even[23], 0);

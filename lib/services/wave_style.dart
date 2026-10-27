@@ -6,13 +6,13 @@ import 'dart:math' as math;
 /// Bands delivered by the playback visualizer.
 const int spectrumBandCount = 24;
 
-/// Raises quieter bands that already have energy, relative to this frame.
+/// Slightly raises quieter bands that already have energy.
 ///
-/// A pop mix is bass-heavy even after log-frequency banding. The exponent
-/// keeps the loudest column the loudest and leaves true silence dark.
+/// The exponent stays close to 1. A stronger lift pulled high-frequency
+/// columns up to the bass peak and filled the band.
 List<double> evenOutSpectrum(List<double> levels) {
   const gate = 0.05;
-  const gamma = 0.65;
+  const gamma = 0.90;
   var peak = 0.0;
   for (final level in levels) {
     if (level > peak) peak = level;
