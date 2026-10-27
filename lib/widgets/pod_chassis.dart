@@ -7,6 +7,31 @@ import '../providers/pod_state.dart';
 import 'click_wheel.dart';
 import 'lcd_screen.dart';
 
+/// Outer shell radius.
+///
+/// [systemCorners] is [MediaQueryData.displayCornerRadii]: Flutter converts
+/// `WindowInsets.getRoundedCorner` (API 31+, each corner in physical pixels)
+/// into a logical [BorderRadius]. Null (older Android, desktop, tests) or an
+/// all-zero radius means the platform did not report a corner. Phones stay
+/// square. Wide layouts keep the fixed 36 radius.
+BorderRadius? chassisOuterRadius({
+  required bool isDesktopWide,
+  BorderRadius? systemCorners,
+}) {
+  if (_hasPositiveCorner(systemCorners)) return systemCorners;
+  if (isDesktopWide) return BorderRadius.circular(36);
+  return null;
+}
+
+bool _hasPositiveCorner(BorderRadius? radii) {
+  if (radii == null) return false;
+  bool live(Radius radius) => radius.x > 0 || radius.y > 0;
+  return live(radii.topLeft) ||
+      live(radii.topRight) ||
+      live(radii.bottomRight) ||
+      live(radii.bottomLeft);
+}
+
 /// Play window uses a 3:4 frame, then keeps that width and uses 5/6 of the height.
 class _LcdSize {
   final double width;
@@ -49,11 +74,17 @@ class PodChassis extends StatelessWidget {
         // On mobile phones (e.g. OPPO Find X9s Pro 19.5:9), fill 100% full screen edge-to-edge!
         final bool isDesktopWide = totalWidth > 540;
         final double effectiveWidth = isDesktopWide ? 460.0 : totalWidth;
+        final BorderRadius? outerRadius = chassisOuterRadius(
+          isDesktopWide: isDesktopWide,
+          systemCorners: MediaQuery.maybeDisplayCornerRadiiOf(context),
+        );
 
         return Center(
           child: Container(
+            key: const Key('pod_chassis_shell'),
             width: effectiveWidth,
             height: totalHeight,
+            clipBehavior: outerRadius == null ? Clip.none : Clip.antiAlias,
             decoration: BoxDecoration(
               // Shell face: theme color with a subtle bevel
               gradient: LinearGradient(
@@ -69,7 +100,7 @@ class PodChassis extends StatelessWidget {
               border: isDesktopWide
                   ? Border.all(color: theme.chassisBezel, width: 2.0)
                   : null,
-              borderRadius: isDesktopWide ? BorderRadius.circular(36) : null,
+              borderRadius: outerRadius,
               boxShadow: isDesktopWide
                   ? [
                       BoxShadow(
