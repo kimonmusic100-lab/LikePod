@@ -2,9 +2,9 @@
 
 ## v0.1.0
 
-versionName `0.1.0`，versionCode `50`。标签 `v0.1.0` 指向 `8b9084c92bb6785f91c19d60b5ac37a3b9313a33`。
+versionName `0.1.0`，versionCode `50`。标签 `v0.1.0` 指向包含本文的文档提交。安装包打自 `8b9084c92bb6785f91c19d60b5ac37a3b9313a33`，字节没有重编。
 
-versionName `0.1.0`, versionCode `50`. Tag `v0.1.0` points at `8b9084c92bb6785f91c19d60b5ac37a3b9313a33`.
+versionName `0.1.0`, versionCode `50`. Tag `v0.1.0` points at the docs commit that contains this file. The package was built from `8b9084c92bb6785f91c19d60b5ac37a3b9313a33` and was not rebuilt.
 
 安装包 `likepod-0.1.0-vc50-nplayout-mixer-arm64-release.apk`，9552340 字节，MD5 `eca8a2c4c58c385593b2174b96cbb7d1`。下载 https://gofile.io/d/coBII1Bz 。签名证书 SHA-256 `3b985a6d41f8ce1a6cd3ecc9f06b505f78493f8efb3e09983b6e46fcfadebb54`。
 

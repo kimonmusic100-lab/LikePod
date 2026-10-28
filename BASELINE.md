@@ -1,16 +1,21 @@
 # LikePod v0.1.0 原始基准版 / release freeze
 
-This is the official v0.1.0 freeze. The annotated tag `v0.1.0` points at the
-nplayout commit below, not at later documentation commits.
+This is the official v0.1.0 freeze. The annotated tag `v0.1.0` points at
+this commit, so a checkout of the tag includes these release docs.
 
-这是正式的 v0.1.0 冻结。附注标签 `v0.1.0` 指向下面的 nplayout 提交，而不是之后只改文档的提交。
+这是正式的 v0.1.0 冻结。附注标签 `v0.1.0` 指向本提交，检出标签时包含这些发布文档。
+
+The APK bytes are unchanged from the nplayout source commit. Later edits on
+this commit are documentation only.
+
+安装包字节与 nplayout 源提交相同。本提交相对那个提交只改了文档。
 
 | | |
 | --- | --- |
 | versionName | `0.1.0` |
 | versionCode | 50 |
-| commit | `8b9084c92bb6785f91c19d60b5ac37a3b9313a33` |
-| tag | `v0.1.0` (`e87b64d049f3300c441e28445eeb4cb3e3df1130`) |
+| tagged commit | `v0.1.0` (this commit) |
+| APK source commit | `8b9084c92bb6785f91c19d60b5ac37a3b9313a33` |
 | APK | `likepod-0.1.0-vc50-nplayout-mixer-arm64-release.apk` |
 | size | 9552340 bytes |
 | MD5 | `eca8a2c4c58c385593b2174b96cbb7d1` |
