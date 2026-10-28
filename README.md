@@ -4,9 +4,6 @@
 
 LikePod is a Classic-style wheel player built with Flutter: a color LCD over a round click wheel.
 
-LikePod 与 Apple 无关。
-
-LikePod is not affiliated with Apple.
 
 ![LikePod](assets/brand/likepod.png)
 
