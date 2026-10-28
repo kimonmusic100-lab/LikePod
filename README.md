@@ -33,20 +33,6 @@ Device screenshots are not in the tree yet. The image above is the app mark.
 
 ## 安装 / Install
 
-v0.1.0 的 arm64 发布包：
-
-The v0.1.0 arm64 release package:
-
-| | |
-| --- | --- |
-| file | `likepod-0.1.0-vc50-nplayout-mixer-arm64-release.apk` |
-| versionName | `0.1.0` |
-| versionCode | 50 |
-| size | 9552340 bytes |
-| MD5 | `eca8a2c4c58c385593b2174b96cbb7d1` |
-| download | https://gofile.io/d/coBII1Bz |
-| cert SHA-256 | `3b985a6d41f8ce1a6cd3ecc9f06b505f78493f8efb3e09983b6e46fcfadebb54` |
-
 只含 `arm64-v8a`。安装前核对 MD5 和证书。若以后的包装了另一把签名，不能直接覆盖这次安装，需要先卸载。
 
 The APK is arm64-v8a only. Check the MD5 and certificate before installing. A later build signed with a different key cannot replace this install; uninstall first.
