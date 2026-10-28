@@ -37,7 +37,7 @@ Device screenshots are not in the tree yet. The image above is the app mark.
 
 The APK is arm64-v8a only. Check the MD5 and certificate before installing. A later build signed with a different key cannot replace this install; uninstall first.
 
-标签 `v0.1.0` 指向包含这些文档的提交。安装包打自 `8b9084c92bb6785f91c19d60b5ac37a3b9313a33`，MD5 不变。说明见 `BASELINE.md` 和 `CHANGELOG.md`。
+标签 `v0.1.0` 指向包含这些文档的提交。安装包打自 `eca8a2c4c58c385593b2174b96cbb7d1`，MD5 不变。说明见 `BASELINE.md` 和 `CHANGELOG.md`。
 
 Tag `v0.1.0` points at the commit that contains these docs. The package was built from `8b9084c92bb6785f91c19d60b5ac37a3b9313a33`; the MD5 is unchanged. See `BASELINE.md` and `CHANGELOG.md`.
 
