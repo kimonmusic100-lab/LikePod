@@ -1,45 +1,134 @@
 # LikePod
 
-复古滚轮播放器，使用 Flutter 构建。LikePod 与 Apple 无关。
+复古滚轮播放器，使用 Flutter 构建。彩色 LCD，下面是圆形滚轮。
 
-LikePod is a Classic-style wheel player built with Flutter. It is not affiliated with Apple.
+LikePod is a Classic-style wheel player built with Flutter: a color LCD over a round click wheel.
+
+LikePod 与 Apple 无关。
+
+LikePod is not affiliated with Apple.
+
+![LikePod](assets/brand/likepod.png)
+
+设备实机截图还没有放进仓库。上面是应用标识。
+
+Device screenshots are not in the tree yet. The image above is the app mark.
+
+## 功能 / Features
+
+- 主菜单、音乐库、Cover Flow、正在播放、设置
+- 滚轮滑动选择，中心键确认，MENU 返回；可开关滚轮音和触感
+- 曲库来自你勾选的文件夹（MediaStore）。标题、艺人、专辑、时长和封面来自系统媒体库
+- 正在播放：封面、歌名、艺人、专辑、进度、音量、星级，以及底部点阵柱
+- 机身配色：Space Gray、Classic White、Metallic Silver、Stealth Black
+- 手机上外壳圆角跟随系统圆角，不裁剪点阵柱
+- 设置、星级、上次曲目、队列和进度会记住。下次打开停在主菜单，进度处于暂停，按播放续听
+- 关于页居中，并列出开源许可
+
+- Menus for music, Cover Flow, Now Playing, and settings
+- Wheel scroll, center select, MENU back; optional wheel sounds and haptics
+- Library from folders you choose. Title, artist, album, duration, and art come from the system media store
+- Now Playing shows the cover, title, artist, album, progress, volume, rating, and the dot-column waveform
+- Shell colors: Space Gray, Classic White, Metallic Silver, Stealth Black
+- On a phone the outer shell follows the system corner radii and does not clip the waveform
+- Settings, ratings, and the last track, queue, and position are kept. The next launch stays on the main menu, paused
+- About is centered and lists open-source notices
+
+## 安装 / Install
+
+v0.1.0 的 arm64 发布包：
+
+The v0.1.0 arm64 release package:
+
+| | |
+| --- | --- |
+| file | `likepod-0.1.0-vc50-nplayout-mixer-arm64-release.apk` |
+| versionName | `0.1.0` |
+| versionCode | 50 |
+| size | 9552340 bytes |
+| MD5 | `eca8a2c4c58c385593b2174b96cbb7d1` |
+| download | https://gofile.io/d/coBII1Bz |
+| cert SHA-256 | `3b985a6d41f8ce1a6cd3ecc9f06b505f78493f8efb3e09983b6e46fcfadebb54` |
+
+只含 `arm64-v8a`。安装前核对 MD5 和证书。若以后的包装了另一把签名，不能直接覆盖这次安装，需要先卸载。
+
+The APK is arm64-v8a only. Check the MD5 and certificate before installing. A later build signed with a different key cannot replace this install; uninstall first.
+
+标签 `v0.1.0` 指向打这个包的提交。说明见 `BASELINE.md` 和 `CHANGELOG.md`。
+
+Tag `v0.1.0` points at the commit this package was built from. See `BASELINE.md` and `CHANGELOG.md`.
 
 ## 运行 / Run
 
-本机或 CI 需要已安装 Flutter SDK。
+需要已安装的 Flutter SDK。
 
-The Flutter SDK must be installed locally or available in CI.
+The Flutter SDK must be installed.
 
 ```bash
 flutter pub get
 flutter run
 ```
 
-## 设置与评分持久化
+发布包只打 arm64：
 
-机身外观、屏幕风格、滚轮音效、触感反馈、随机/重复、音量、歌曲星级，以及上次播放的曲目、队列和进度会写入 `shared_preferences`。下次启动会回到主菜单，并在暂停状态下恢复上次曲目与进度，按播放即可续听。
+The release package is arm64 only:
 
-Shell theme, screen theme, click-wheel sound, haptics, shuffle, repeat, volume, star ratings, and the last track / queue / position are stored with `shared_preferences`. The next launch stays on the main menu and restores that track paused.
+```bash
+flutter build apk --release --target-platform android-arm64
+```
 
-## Android 后台播放
+测试：
 
-播放走系统混音（just_audio）。插入 USB DAC 时由 Android 自己的 USB 音频路由出声，应用不申请 usbfs、不独占接口。其他应用拿走音频焦点时 LikePod 暂停；若这次暂停只是因为焦点被抢走，对方停止播放后会自动续播（短暂焦点靠系统回调，永久焦点如 B 站则在对方播放器结束后重新申请）。用户自己按暂停，或下次冷启动，都不会自动播。
+Tests:
 
-播放开始后，`audio_service` 会启动 `mediaPlayback` 前台服务，通知栏和锁屏提供上一首、播放/暂停、下一首，并跟随现有的随机与重复逻辑。暂停时服务仍保持前台（`androidStopForegroundOnPause: false`），避免 Android 12+ 在后台无法重新开始前台服务。
+```bash
+flutter analyze
+flutter test
+```
 
-`audio_service` starts a `mediaPlayback` foreground service when playback begins. The notification and lock screen expose previous, play/pause, and next, using the same shuffle and repeat rules. The service stays in the foreground while paused so Android 12+ can resume it.
+更多构建说明见 `CONTRIBUTING.md`。
+
+More build notes are in `CONTRIBUTING.md`.
+
+## Android
+
+播放走系统混音（just_audio + audio_service）。USB 声卡只有在 Android 自己把音乐流路由过去时才会出声。应用不独占 USB 接口。
+
+Playback uses the system mixer (just_audio + audio_service). A USB DAC is heard only when Android routes the music stream to it. The app does not claim a USB interface.
+
+点阵柱读取正在播放的会话。捕获策略在音轨创建之前设为允许捕获，否则可视化读到的是静音。
+
+The dot columns read the playing session. The capture policy is set to allow capture before the track is created; otherwise the visualizer stays silent.
+
+`audio_service` 在播放时拉起 `mediaPlayback` 前台服务。通知栏和锁屏有上一首、播放/暂停、下一首。暂停时服务仍保持前台，以便在 Android 12+ 上继续控制。
+
+`audio_service` starts a `mediaPlayback` foreground service when playback begins. The notification and lock screen expose previous, play/pause, and next. The service stays in the foreground while paused so Android 12+ can keep controlling it.
+
+其他应用拿走音频焦点时 LikePod 暂停。若暂停只是因为焦点被抢走，对方结束后会续播。自己按暂停，或下次冷启动，不会自动播。
+
+LikePod pauses when another app takes audio focus. If that pause was only a focus loss, playback resumes when the other app stops. A manual pause, or the next cold start, does not auto-play.
 
 仍未覆盖 / still open:
 
-- 通知栏封面只用 MediaStore 专辑图 URI（`content://media/external/audio/albumart/{id}`）。内嵌 ID3 封面不会写进通知，屏幕里的封面预览不受影响。
-- 进程被系统或厂商省电策略杀掉后，不会从通知栏冷启动自动续播。再次打开应用会恢复上次进度（暂停），需要再按播放。
-- 从最近任务划掉应用时，系统可能拆掉媒体服务。
+- 通知栏封面只用 MediaStore 专辑图。内嵌封面不会进通知；屏幕里的封面不受影响。
+- 进程被系统杀掉后，不会从通知栏冷启动续播。再次打开会恢复上次进度（暂停）。
+- 从最近任务划掉时，系统可能拆掉媒体服务。
 - 没有 Android Auto，也没有自定义通知布局。
-- 滚轮点击音仍走 `audioplayers`，不进入媒体会话。
+- 滚轮点击音不进入媒体会话。
 
-Windows 平台目录未包含在初始导入中。需要时可用下面的命令重新生成：
+- Notification art uses the MediaStore album URI only. Embedded art stays on the in-app cover.
+- If the process is killed, the notification cannot cold-start playback. Opening the app restores the last position, paused.
+- Swiping the app away may tear down the media service.
+- No Android Auto, and no custom notification layout.
+- Wheel clicks are not part of the media session.
 
-The Windows platform folder was omitted from the initial import. Regenerate it when needed:
+已发布的包：minSdk 24，targetSdk 36。
+
+The shipped package: minSdk 24, targetSdk 36.
+
+Windows 工程目录不在初始树里。需要时：
+
+The Windows platform folder is not in the initial tree. When needed:
 
 ```bash
 flutter create . --platforms=windows
@@ -47,6 +136,6 @@ flutter create . --platforms=windows
 
 ## 许可 / License
 
-本项目采用 MIT 许可，见仓库根目录 `LICENSE`。仓库此前没有项目许可证，因此选用 MIT。第三方组件、ExoPlayer / AndroidX Media3、Material Icons 与 Noto Sans SC 的归属见 `THIRD_PARTY_NOTICES`。Noto Sans SC 子集的 OFL-1.1 全文在 `licenses/NotoSansSC-OFL.txt`。应用内「关于 → 开源许可」可以阅读同一份名单。
+本项目采用 MIT 许可，见 `LICENSE`。第三方组件、ExoPlayer / AndroidX Media3、Material Icons 与 Noto Sans SC 见 `THIRD_PARTY_NOTICES`。Noto Sans SC 子集的 OFL-1.1 全文在 `licenses/NotoSansSC-OFL.txt`。应用内「关于 → 开源许可」可以阅读同一份名单。
 
-This project is MIT licensed. See `LICENSE`. No project license was documented before, so MIT is the chosen license. Third-party components, ExoPlayer / AndroidX Media3, Material Icons, and Noto Sans SC are listed in `THIRD_PARTY_NOTICES`. The OFL-1.1 text for the Noto Sans SC subset is `licenses/NotoSansSC-OFL.txt`. The same list is readable in the app under About → 开源许可.
+This project is MIT licensed. See `LICENSE`. Third-party components, ExoPlayer / AndroidX Media3, Material Icons, and Noto Sans SC are listed in `THIRD_PARTY_NOTICES`. The OFL-1.1 text for the Noto Sans SC subset is `licenses/NotoSansSC-OFL.txt`. The same list is in the app under About → 开源许可.
