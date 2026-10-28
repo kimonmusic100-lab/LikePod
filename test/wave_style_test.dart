@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:likepod/services/spectrum_feed.dart';
 import 'package:likepod/services/wave_style.dart';
+import 'package:likepod/widgets/lcd_screen.dart';
 import 'package:likepod/widgets/now_playing_wave.dart';
 
 void main() {
@@ -76,6 +77,27 @@ void main() {
       expect(left, closeTo(right, 0.001));
       expect(left, greaterThanOrEqualTo(0));
     }
+  });
+
+  test('the tilted cover meets the first dot column', () {
+    const leftInset = 22.0;
+    const rightInset = 12.0;
+    const bandInset = 2.0;
+    const waveSide = (leftInset + rightInset) / 2 + bandInset;
+    for (final width in [280.0, 340.0, 390.0, 460.0]) {
+      final waveWidth = width - waveSide * 2;
+      final coverWidth = width / 2 + 18 - leftInset - 16;
+      final dotsLeft = waveSide + waveformLeadingEdge(width: waveWidth);
+      final blockLeft = dotsLeft - coverArtLeadingOffset(coverWidth);
+      expect(
+        blockLeft + coverArtLeadingOffset(coverWidth),
+        closeTo(dotsLeft, 0.001),
+      );
+      expect(blockLeft, greaterThan(leftInset));
+      expect(blockLeft + coverWidth, lessThan(width - rightInset));
+    }
+    expect(nowPlayingBlockDrop, greaterThan(6));
+    expect(nowPlayingBlockDrop, lessThan(20));
   });
 
   test('a live level paints at least one dot', () {

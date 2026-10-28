@@ -19,6 +19,34 @@ import 'now_playing_wave.dart';
 /// Light-blue wash for songs that are already in the playlist being edited.
 const Color addedSongRowColor = Color(0xFFC5E6F6);
 
+/// The tilted cover reads high. The cover and the titles drop together.
+const double nowPlayingBlockDrop = 12;
+
+/// Cover card scale inside its slot. The slot width stays put.
+const double nowPlayingCoverScale = 0.9;
+
+/// Y tilt of the Now Playing cover, around the card's right edge.
+const double nowPlayingCoverTilt = -0.32;
+
+/// Perspective term on the cover tilt (`Matrix4` entry row 3, column 2).
+const double nowPlayingCoverPerspective = 0.0026;
+
+/// Distance from the cover slot's left edge to the tilted art's left edge.
+///
+/// The art starts at the slot's left. The tilt pivots on the slot's right
+/// edge, so the near side lands left of the slot.
+double coverArtLeadingOffset(double coverWidth) {
+  if (coverWidth <= 0) return 0;
+  final cosine = math.cos(nowPlayingCoverTilt);
+  final sine = math.sin(nowPlayingCoverTilt);
+  final localX = -coverWidth;
+  final rotatedX = cosine * localX;
+  final rotatedZ = -sine * localX;
+  final w = 1 + nowPlayingCoverPerspective * rotatedZ;
+  if (w.abs() < 1e-6) return 0;
+  return rotatedX / w + coverWidth;
+}
+
 /// Slide of an already-added title and artist between the two edges.
 const Duration addedSongAlignDuration = Duration(milliseconds: 320);
 
@@ -602,7 +630,9 @@ class _LcdScreenState extends State<LcdScreen> {
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     // Height is the old square size. Width is 16px less,
-                    // so only the right edge moves left. Left inset stays 22.
+                    // so only the right edge moves left. The size still
+                    // uses the 22px inset; the block's own left padding
+                    // is whatever puts the tilted art on the first dot.
                     const pastMidline = 18.0;
                     const rightPull = 16.0;
                     final maxByHeight = constraints.maxHeight / 1.42;
@@ -617,87 +647,103 @@ class _LcdScreenState extends State<LcdScreen> {
                       areaHeight: constraints.maxHeight,
                       coverHeight: coverHeight,
                     );
-                    // Cover block stays inset 22/12. The waveform uses the
-                    // same width it had inside that padding, shifted so the
-                    // two screen margins match.
+                    // The waveform keeps equal side margins. The cover
+                    // block slides so the tilted art's left edge meets
+                    // the first dot column.
                     const bandInset = 2.0;
                     final waveSide = (leftInset + rightInset) / 2 + bandInset;
+                    final waveWidth = math.max(
+                      0.0,
+                      constraints.maxWidth - waveSide * 2,
+                    );
+                    final dotsLeft =
+                        waveSide + waveformLeadingEdge(width: waveWidth);
+                    final rawBlockLeft =
+                        dotsLeft - coverArtLeadingOffset(coverWidth);
+                    final maxBlockLeft = math.max(
+                      0.0,
+                      constraints.maxWidth - coverWidth - rightInset,
+                    );
+                    final blockLeft = rawBlockLeft.clamp(0.0, maxBlockLeft);
                     return Stack(
                       fit: StackFit.expand,
                       children: [
                         Padding(
-                          padding: const EdgeInsets.only(
-                            left: leftInset,
+                          padding: EdgeInsets.only(
+                            left: blockLeft,
                             right: rightInset,
                           ),
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  _build3DCoverArtwork(
-                                    pod,
-                                    coverWidth,
-                                    coverHeight,
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          pod.currentTitle,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: widget.theme.lcdText,
-                                            fontSize: 16.5,
-                                            fontWeight: FontWeight.w700,
-                                            height: 1.2,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 4),
-                                        Text(
-                                          pod.currentArtist,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: widget.theme.lcdSubtext,
-                                            fontSize: 14.0,
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          pod.currentAlbum,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: widget.theme.lcdSubtext
-                                                .withValues(alpha: 0.8),
-                                            fontSize: 12.5,
-                                            fontWeight: FontWeight.w400,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 6),
-                                        Text(
-                                          pod.queueLength > 0
-                                              ? '${pod.queuePosition}/${pod.queueLength}  ${pod.playModeLabel}'
-                                              : pod.playModeLabel,
-                                          style: TextStyle(
-                                            color: widget.theme.lcdSubtext,
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                        ),
-                                      ],
+                              Transform.translate(
+                                offset: const Offset(0, nowPlayingBlockDrop),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _build3DCoverArtwork(
+                                      pod,
+                                      coverWidth,
+                                      coverHeight,
                                     ),
-                                  ),
-                                ],
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            pod.currentTitle,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: widget.theme.lcdText,
+                                              fontSize: 16.5,
+                                              fontWeight: FontWeight.w700,
+                                              height: 1.2,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            pod.currentArtist,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: widget.theme.lcdSubtext,
+                                              fontSize: 14.0,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            pod.currentAlbum,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: widget.theme.lcdSubtext
+                                                  .withValues(alpha: 0.8),
+                                              fontSize: 12.5,
+                                              fontWeight: FontWeight.w400,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 6),
+                                          Text(
+                                            pod.queueLength > 0
+                                                ? '${pod.queuePosition}/${pod.queueLength}  ${pod.playModeLabel}'
+                                                : pod.playModeLabel,
+                                            style: TextStyle(
+                                              color: widget.theme.lcdSubtext,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ],
                           ),
@@ -1017,6 +1063,7 @@ class _LcdScreenState extends State<LcdScreen> {
     bool isReflection = false,
   }) {
     return Container(
+      key: isReflection ? null : const Key('now_playing_cover'),
       width: width,
       height: height,
       decoration: BoxDecoration(
@@ -1056,7 +1103,7 @@ class _LcdScreenState extends State<LcdScreen> {
     // 90% of the previous card, same aspect ratio. The slot keeps the old
     // top edge; the smaller card sits on that edge and is centered across
     // the old width, so it shrinks downward.
-    const double scale = 0.9;
+    const double scale = nowPlayingCoverScale;
     final cardWidth = coverWidth * scale;
     final cardHeight = coverHeight * scale;
     final slotHeight = coverHeight + 1 + coverHeight * reflectionFactor;
@@ -1064,8 +1111,8 @@ class _LcdScreenState extends State<LcdScreen> {
     final art = Transform(
       alignment: Alignment.centerRight,
       transform: Matrix4.identity()
-        ..setEntry(3, 2, 0.0026)
-        ..rotateY(-0.32),
+        ..setEntry(3, 2, nowPlayingCoverPerspective)
+        ..rotateY(nowPlayingCoverTilt),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,

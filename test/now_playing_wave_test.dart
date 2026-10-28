@@ -8,6 +8,7 @@ import 'package:likepod/main.dart';
 import 'package:likepod/providers/pod_state.dart';
 import 'package:likepod/services/spectrum_feed.dart';
 import 'package:likepod/widgets/lcd_screen.dart';
+import 'package:likepod/widgets/now_playing_wave.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -67,6 +68,17 @@ void main() {
     final leftInset = waveRect.left - lcdRect.left;
     final rightInset = lcdRect.right - waveRect.right;
     expect((leftInset - rightInset).abs(), lessThan(0.5));
+    final cover = tester.renderObject<RenderBox>(
+      find.byKey(const Key('now_playing_cover')),
+    );
+    final wave = tester.renderObject<RenderBox>(
+      find.byKey(const ValueKey('now_playing_wave')),
+    );
+    final coverLeft = cover.localToGlobal(Offset.zero).dx;
+    final dotsLeft =
+        wave.localToGlobal(Offset.zero).dx +
+        waveformLeadingEdge(width: wave.size.width);
+    expect(coverLeft, closeTo(dotsLeft, 0.75));
     expect(find.text('镜像柱'), findsNothing);
     expect(find.text('柔光柱'), findsNothing);
     expect(find.text('点阵柱'), findsNothing);
@@ -74,9 +86,7 @@ void main() {
     await _saveShot(tester, 'now-playing-wave-dots-vc47.png');
 
     // The device frame: columns near the ceiling, right side as tall as the left.
-    SpectrumFeed.instance.debugSetLevels(
-      List<double>.filled(24, 0.96),
-    );
+    SpectrumFeed.instance.debugSetLevels(List<double>.filled(24, 0.96));
     await tester.pump();
     await _saveShot(tester, 'now-playing-wave-before-tune.png');
 

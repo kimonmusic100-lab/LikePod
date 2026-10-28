@@ -53,6 +53,51 @@ double dotColumnOriginX({
   return (width - occupied) / 2 + radius;
 }
 
+/// Dot grid for one waveform. [height] is the painter's height.
+class WaveColumnGrid {
+  final double radius;
+  final double pitch;
+  final int columns;
+  final double originX;
+
+  const WaveColumnGrid({
+    required this.radius,
+    required this.pitch,
+    required this.columns,
+    required this.originX,
+  });
+
+  /// Left edge of the first column. The top dot is drawn a little wider.
+  double get leadingEdge => originX - radius * 1.15;
+}
+
+WaveColumnGrid waveColumnGrid({required double width, required double height}) {
+  const rows = 8;
+  final stepY = height <= 4 ? 0.0 : (height - 4) / rows;
+  final radius = (stepY * 0.32).clamp(1.15, 1.7);
+  final pitch = math.max(stepY * 1.15, radius * 3.1);
+  final columns = pitch <= 0 ? 12 : math.max(12, ((width - 8) / pitch).floor());
+  return WaveColumnGrid(
+    radius: radius,
+    pitch: pitch,
+    columns: columns,
+    originX: dotColumnOriginX(
+      width: width,
+      columns: columns,
+      pitch: pitch,
+      radius: radius,
+    ),
+  );
+}
+
+/// Left edge of the first dot column inside a waveform of [width].
+double waveformLeadingEdge({
+  required double width,
+  double height = nowPlayingWaveHeight,
+}) {
+  return waveColumnGrid(width: width, height: height).leadingEdge;
+}
+
 /// Lit black dots only. Levels come from [SpectrumFeed].
 class NowPlayingWave extends StatefulWidget {
   final Color color;
@@ -116,16 +161,12 @@ class _DotColumnPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     const rows = 8;
+    final grid = waveColumnGrid(width: size.width, height: size.height);
     final stepY = (size.height - 4) / rows;
-    final radius = (stepY * 0.32).clamp(1.15, 1.7);
-    final stepX = math.max(stepY * 1.15, radius * 3.1);
-    final cols = math.max(12, ((size.width - 8) / stepX).floor());
-    final originX = dotColumnOriginX(
-      width: size.width,
-      columns: cols,
-      pitch: stepX,
-      radius: radius,
-    );
+    final radius = grid.radius;
+    final stepX = grid.pitch;
+    final cols = grid.columns;
+    final originX = grid.originX;
     final bottom = size.height - 2 - radius;
     final lit = Paint()..color = color;
     for (var c = 0; c < cols; c++) {
