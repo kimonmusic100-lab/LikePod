@@ -39,7 +39,7 @@ The APK is arm64-v8a only. Check the MD5 and certificate before installing. A la
 
 标签 `v0.1.0` 指向包含这些文档的提交。安装包打自 `eca8a2c4c58c385593b2174b96cbb7d1`，MD5 不变。说明见 `BASELINE.md` 和 `CHANGELOG.md`。
 
-Tag `v0.1.0` points at the commit that contains these docs. The package was built from `8b9084c92bb6785f91c19d60b5ac37a3b9313a33`; the MD5 is unchanged. See `BASELINE.md` and `CHANGELOG.md`.
+Tag `v0.1.0` points at the commit that contains these docs. The package was built from `eca8a2c4c58c385593b2174b96cbb7d1`; the MD5 is unchanged. See `BASELINE.md` and `CHANGELOG.md`.
 
 ## 运行 / Run
 
